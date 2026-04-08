@@ -1,1 +1,8 @@
 .venv
+*.sh
+/.claude
+/.mplconfig
+/__pycache__
+.codex
+/.larch
+pvs.yaml
