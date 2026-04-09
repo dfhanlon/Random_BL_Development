@@ -53,8 +53,6 @@ class DummyPV:
     def put(self, value, wait=False, **kwargs):
         self._value = value
         for idx, cb in self._callbacks:
-            # Epics callbacks often expect a background thread or asynchronous dispatch,
-            # but synchronously is fine for this UI mock.
             cb(pvname=self.pvname, value=self._value, char_value=str(self._value), charvalue=str(self._value))
         return 1
 
@@ -91,9 +89,14 @@ epics.caget = dummy_caget
 epics.caput = dummy_caput
 
 if __name__ == '__main__':
+    import sim_pvs
+    sim_pvs.patch_epics()
+    sim = sim_pvs.SimulatedBeamline()
+    sim.start()
+
     from app import launch_app, DetectorConfig
 
-    det1 = DetectorConfig(name="Det1", prefix="ME4:", nmca=4)
-    bl_control = DetectorConfig(name="BL Control", prefix="BL00:")
+    det1 = DetectorConfig(name="Ge-32 Det1", prefix="MOCK:XSP3A:", nmca=32, det_type="ME-32")
+    det2 = DetectorConfig(name="Ge-32 Det2", prefix="MOCK:XSP3B:", nmca=32, det_type="ME-32")
 
-    launch_app([det1, bl_control], title="Xspress3 Viewer - Dummy Mode")
+    launch_app([det1, det2], title="XAS XRF Viewer — 2×32 Ge Detectors", use_sim=True)

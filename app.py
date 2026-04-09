@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from functools import partial
 import os
 from pathlib import Path
+import subprocess
+import sys
+import threading
 import time
 from typing import Sequence
 
@@ -2961,6 +2964,118 @@ def build_app_classes():
 
     DetectorPanel.ShowROIStatus = _panel_show_roi_status
 
+    class EmbeddedQtPanel:
+        """
+        Notebook tab that spawns beamline_control.py as a standalone window.
+        The tab itself shows a launch button and status.
+        """
+        _BC_SCRIPT = Path(__file__).with_name("beamline_control.py")
+
+        def __init__(self, parent, use_sim: bool = False):
+            self.page_label = "Beamline Controls"
+            self.window_title = "Beamline Controls"
+            self._use_sim = use_sim
+            self._proc = None
+            self._qt_wid = None  # X11 window ID of the embedded Qt widget
+
+            self._panel = wx.Panel(parent)
+            self._panel.SetBackgroundColour(wx.BLACK)
+            self._panel.page_label = self.page_label
+            self._panel.window_title = self.window_title
+            self._panel._embedded_qt = self
+
+            # Resize handler — forwards panel size to the Qt subprocess via Xlib
+            self._panel.Bind(wx.EVT_SIZE, self._on_size)
+
+            # Poll whether the subprocess is still alive
+            self._timer = wx.Timer(self._panel)
+            self._panel.Bind(wx.EVT_TIMER, self._on_timer, self._timer)
+            self._timer.Start(1000)
+
+        def __getattr__(self, name):
+            return getattr(self._panel, name)
+
+        def activate(self):
+            """Called when tab is selected — auto-open if not already running."""
+            if self._proc is None or self._proc.poll() is not None:
+                wx.CallLater(100, self._launch)
+
+        def _launch(self):
+            if self._proc is not None and self._proc.poll() is None:
+                return
+            project_dir = str(Path(__file__).parent)
+            venv_python = str(Path(project_dir) / ".venv" / "bin" / "python3")
+            python = venv_python if Path(venv_python).exists() else sys.executable
+
+            panel_wid = self._panel.GetHandle()
+            w, h = self._panel.GetSize()
+
+            cmd = [
+                python, str(self._BC_SCRIPT),
+                "--embed", str(panel_wid),
+                "--width", str(w),
+                "--height", str(h),
+            ]
+            if self._use_sim:
+                cmd.append("--sim")
+
+            env = os.environ.copy()
+            env.setdefault("DISPLAY", os.environ.get("DISPLAY", ":1"))
+            env["PYTHONPATH"] = project_dir + os.pathsep + env.get("PYTHONPATH", "")
+
+            self._proc = subprocess.Popen(
+                cmd,
+                cwd=project_dir,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=open(os.path.join(project_dir, "bc_launch.log"), "w"),
+            )
+            # Read the Qt window ID from stdout in a background thread
+            threading.Thread(target=self._read_winid, daemon=True).start()
+
+        def _read_winid(self):
+            """Read WINID:<n> from the Qt subprocess stdout."""
+            try:
+                for raw in self._proc.stdout:
+                    line = raw.decode(errors="replace").strip()
+                    if line.startswith("WINID:"):
+                        self._qt_wid = int(line.split(":")[1])
+                        break
+            except Exception:
+                pass
+
+        def _on_size(self, event):
+            event.Skip()
+            if self._qt_wid is None or self._proc is None or self._proc.poll() is not None:
+                return
+            w, h = event.GetSize()
+            if w <= 0 or h <= 0:
+                return
+            try:
+                import ctypes
+                xlib = ctypes.CDLL("libX11.so.6")
+                xlib.XOpenDisplay.restype = ctypes.c_void_p
+                display = xlib.XOpenDisplay(None)
+                if display:
+                    xlib.XResizeWindow(display, self._qt_wid, w, h)
+                    xlib.XFlush(display)
+                    xlib.XCloseDisplay(display)
+            except Exception:
+                pass
+
+        def _on_timer(self, _event):
+            if self._proc is not None and self._proc.poll() is not None:
+                # Process died — clear state so activate() can relaunch
+                self._proc = None
+                self._qt_wid = None
+                self._panel.SetBackgroundColour(wx.BLACK)
+                self._panel.Refresh()
+
+        def onClose(self):
+            self._timer.Stop()
+            if self._proc and self._proc.poll() is None:
+                self._proc.terminate()
+
     class DualDetectorHostFrame(wx.Frame):
         """Top-level frame with detector and beamline-control notebook tabs."""
 
@@ -2970,12 +3085,14 @@ def build_app_classes():
             detectors: Sequence[DetectorConfig],
             size=(1400, 950),
             title="Xspress3 Viewer",
+            use_sim: bool = False,
             _larch=None,
         ):
             super().__init__(None, title=title, size=size)
             self.base_title = title
             self.detectors = list(detectors)
             self._larch = _larch
+            self._use_sim = use_sim
 
             # Create shared Larch interpreter upfront for faster panel initialization
             if self._larch is None:
@@ -3026,15 +3143,9 @@ def build_app_classes():
                 self.notebook.AddPage(panel, detector.name)
                 self.panels.append(panel)
 
-            if self.bl_control_detector is not None:
-                bl_panel = BeamlineControlPanel(
-                    self.notebook,
-                    detector=self.bl_control_detector,
-                    title="Beamline Controls",
-                )
-                bl_panel.page_label = "Beamline Controls"
-                self.notebook.AddPage(bl_panel, bl_panel.page_label)
-                self.panels.append(bl_panel)
+            bl_panel = EmbeddedQtPanel(self.notebook, use_sim=self._use_sim)
+            self.notebook.AddPage(bl_panel._panel, bl_panel.page_label)
+            self.panels.append(bl_panel)
 
             if self.panels:
                 self.update_detector_title(self.panels[0], self.panels[0].window_title)
@@ -3043,18 +3154,24 @@ def build_app_classes():
             self.statusbar.SetStatusText(text, panel)
 
         def update_detector_title(self, panel, title):
-            page_index = self.notebook.FindPage(panel)
+            # Unwrap EmbeddedQtPanel to its inner wx.Panel for notebook lookups
+            wx_panel = getattr(panel, "_panel", panel)
+            page_index = self.notebook.FindPage(wx_panel)
             label = getattr(panel, "page_label", title)
             if page_index != wx.NOT_FOUND:
                 self.notebook.SetPageText(page_index, label)
             current = self.notebook.GetCurrentPage()
-            if current is panel:
+            if current is wx_panel:
                 super().SetTitle(f"{self.base_title} | {label}")
 
         def _on_page_changed(self, event):
             panel = self.notebook.GetCurrentPage()
             if panel is not None:
                 self.update_detector_title(panel, getattr(panel, "window_title", panel.page_label))
+                # Trigger subprocess launch the first time the BL tab is shown
+                embedded = getattr(panel, "_embedded_qt", None)
+                if embedded is not None:
+                    embedded.activate()
             event.Skip()
 
         def _on_close(self, event):
@@ -3075,6 +3192,7 @@ def build_app_classes():
             size=(1400, 950),
             title="Xspress3 Viewer",
             output_title="XRF",
+            use_sim: bool = False,
             _larch=None,
             **kws,
         ):
@@ -3082,6 +3200,7 @@ def build_app_classes():
             self.size = size
             self.title = title
             self.output_title = output_title
+            self.use_sim = use_sim
             super().__init__(
                 _larch=_larch,
                 prefix=self.detectors[0].prefix if self.detectors else None,
@@ -3099,6 +3218,7 @@ def build_app_classes():
                 detectors=self.detectors,
                 size=self.size,
                 title=self.title,
+                use_sim=self.use_sim,
                 _larch=self._larch,
             )
             frame.Show()
@@ -3114,7 +3234,8 @@ def launch_app(
     *,
     size=(1400, 950),
     title="Xspress3 Viewer",
+    use_sim: bool = False,
 ):
     _, _, Xspress3ViewerApp = build_app_classes()
-    app = Xspress3ViewerApp(detectors=detectors, size=size, title=title)
+    app = Xspress3ViewerApp(detectors=detectors, size=size, title=title, use_sim=use_sim)
     app.MainLoop()
