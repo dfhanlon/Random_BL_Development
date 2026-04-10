@@ -89,6 +89,8 @@ _REGISTRY: dict[str, SimPV] = {}
 
 
 def _reg(pvname: str, initial=0.0) -> SimPV:
+    if pvname in _REGISTRY:
+        return _REGISTRY[pvname]
     p = SimPV(pvname, initial)
     _REGISTRY[pvname] = p
     return p
@@ -168,6 +170,7 @@ class SimulatedBeamline:
         self.dwell_time    = _reg("MCS1607-701:mcs:delay",          1000.0)
         self.stage_z       = _reg("BL1607-I21:Cryo:Z:mm:fbk",      0.0)
         self.furnace_temp  = _reg("PV:FURNACE:TEMP:RBV",            25.0)
+        self.furnace_sp    = _reg("PV:FURNACE:SP:RBV",              25.0)
         self.heat_rate     = _reg("PV:FURNACE:HEATRATE:RBV",        0.0)
         self.m1_pitch      = _reg("BL1607-I21:M1:Pitch:deg:fbk",   2.74)
         self.jj_vgap       = _reg("PSL1607-7-I21-01:Gap:mm",        2.0)
@@ -201,9 +204,10 @@ class SimulatedBeamline:
         for write_pv, read_pv in _mirrors.items():
             wp = _reg(write_pv, 0)
             rp = _reg(read_pv)           # already registered above; fetches existing
-            # capture by value in the closure
-            wp.add_callback(lambda pvname, value, _rp=rp, **kw: _rp.set_sim_value(value)
-                            if value is not None else None)
+            # Wire directly into _cbs so the initial-fire timer in add_callback
+            # does NOT reset the readback's initial value to the write PV's 0.
+            wp._cbs.append((-1, lambda pvname, value, _rp=rp, **kw:
+                            _rp.set_sim_value(value) if value is not None else None))
 
         # Remaining write-only stubs with no readback to mirror
         for pvname in (

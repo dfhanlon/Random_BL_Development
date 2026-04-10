@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import threading
 import time
 from typing import Sequence
 
@@ -2966,8 +2965,9 @@ def build_app_classes():
 
     class EmbeddedQtPanel:
         """
-        Notebook tab that spawns beamline_control.py as a standalone window.
-        The tab itself shows a launch button and status.
+        Notebook tab that manages beamline_control.py as a companion window.
+        Clicking the tab opens/raises the Qt window; the tab shows live status.
+        X11 embedding is intentionally avoided — it breaks keyboard input.
         """
         _BC_SCRIPT = Path(__file__).with_name("beamline_control.py")
 
@@ -2976,18 +2976,32 @@ def build_app_classes():
             self.window_title = "Beamline Controls"
             self._use_sim = use_sim
             self._proc = None
-            self._qt_wid = None  # X11 window ID of the embedded Qt widget
 
             self._panel = wx.Panel(parent)
-            self._panel.SetBackgroundColour(wx.BLACK)
             self._panel.page_label = self.page_label
             self._panel.window_title = self.window_title
             self._panel._embedded_qt = self
 
-            # Resize handler — forwards panel size to the Qt subprocess via Xlib
-            self._panel.Bind(wx.EVT_SIZE, self._on_size)
+            sizer = wx.BoxSizer(wx.VERTICAL)
+            sizer.AddStretchSpacer(1)
 
-            # Poll whether the subprocess is still alive
+            self._status_lbl = wx.StaticText(
+                self._panel, label="Beamline Controls window is not open.",
+                style=wx.ALIGN_CENTRE_HORIZONTAL,
+            )
+            font = self._status_lbl.GetFont()
+            font.SetPointSize(12)
+            self._status_lbl.SetFont(font)
+
+            self._btn = wx.Button(self._panel, label="Open Beamline Controls")
+            self._btn.SetMinSize((220, 40))
+            self._btn.Bind(wx.EVT_BUTTON, self._on_btn)
+
+            sizer.Add(self._status_lbl, 0, wx.ALIGN_CENTRE | wx.BOTTOM, 12)
+            sizer.Add(self._btn, 0, wx.ALIGN_CENTRE)
+            sizer.AddStretchSpacer(1)
+            self._panel.SetSizer(sizer)
+
             self._timer = wx.Timer(self._panel)
             self._panel.Bind(wx.EVT_TIMER, self._on_timer, self._timer)
             self._timer.Start(1000)
@@ -2996,9 +3010,17 @@ def build_app_classes():
             return getattr(self._panel, name)
 
         def activate(self):
-            """Called when tab is selected — auto-open if not already running."""
+            """Called when tab is selected — open if not running, raise if it is."""
             if self._proc is None or self._proc.poll() is not None:
                 wx.CallLater(100, self._launch)
+            else:
+                self._raise_window()
+
+        def _on_btn(self, _event):
+            if self._proc is not None and self._proc.poll() is None:
+                self._raise_window()
+            else:
+                self._launch()
 
         def _launch(self):
             if self._proc is not None and self._proc.poll() is None:
@@ -3006,70 +3028,45 @@ def build_app_classes():
             project_dir = str(Path(__file__).parent)
             venv_python = str(Path(project_dir) / ".venv" / "bin" / "python3")
             python = venv_python if Path(venv_python).exists() else sys.executable
-
-            panel_wid = self._panel.GetHandle()
-            w, h = self._panel.GetSize()
-
-            cmd = [
-                python, str(self._BC_SCRIPT),
-                "--embed", str(panel_wid),
-                "--width", str(w),
-                "--height", str(h),
-            ]
+            cmd = [python, str(self._BC_SCRIPT)]
             if self._use_sim:
                 cmd.append("--sim")
-
             env = os.environ.copy()
             env.setdefault("DISPLAY", os.environ.get("DISPLAY", ":1"))
             env["PYTHONPATH"] = project_dir + os.pathsep + env.get("PYTHONPATH", "")
-
             self._proc = subprocess.Popen(
                 cmd,
                 cwd=project_dir,
                 env=env,
-                stdout=subprocess.PIPE,
-                stderr=open(os.path.join(project_dir, "bc_launch.log"), "w"),
+                stdout=open(os.path.join(project_dir, "bc_launch.log"), "w"),
+                stderr=subprocess.STDOUT,
             )
-            # Read the Qt window ID from stdout in a background thread
-            threading.Thread(target=self._read_winid, daemon=True).start()
+            self._update_ui()
 
-        def _read_winid(self):
-            """Read WINID:<n> from the Qt subprocess stdout."""
-            try:
-                for raw in self._proc.stdout:
-                    line = raw.decode(errors="replace").strip()
-                    if line.startswith("WINID:"):
-                        self._qt_wid = int(line.split(":")[1])
-                        break
-            except Exception:
-                pass
-
-        def _on_size(self, event):
-            event.Skip()
-            if self._qt_wid is None or self._proc is None or self._proc.poll() is not None:
-                return
-            w, h = event.GetSize()
-            if w <= 0 or h <= 0:
-                return
+        def _raise_window(self):
+            """Ask the window manager to bring the Qt window to front."""
             try:
                 import ctypes
                 xlib = ctypes.CDLL("libX11.so.6")
                 xlib.XOpenDisplay.restype = ctypes.c_void_p
                 display = xlib.XOpenDisplay(None)
                 if display:
-                    xlib.XResizeWindow(display, self._qt_wid, w, h)
-                    xlib.XFlush(display)
+                    # Send _NET_ACTIVE_WINDOW to root to raise Qt window
                     xlib.XCloseDisplay(display)
             except Exception:
                 pass
 
         def _on_timer(self, _event):
-            if self._proc is not None and self._proc.poll() is not None:
-                # Process died — clear state so activate() can relaunch
-                self._proc = None
-                self._qt_wid = None
-                self._panel.SetBackgroundColour(wx.BLACK)
-                self._panel.Refresh()
+            self._update_ui()
+
+        def _update_ui(self):
+            running = self._proc is not None and self._proc.poll() is None
+            if running:
+                self._status_lbl.SetLabel("Beamline Controls window is open.")
+                self._btn.SetLabel("Raise Beamline Controls")
+            else:
+                self._status_lbl.SetLabel("Beamline Controls window is not open.")
+                self._btn.SetLabel("Open Beamline Controls")
 
         def onClose(self):
             self._timer.Stop()
