@@ -1,0 +1,68 @@
+Traceback (most recent call last):
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/larch/epics/xrfcontrol.py", line 821, in onStart
+    self.det.set_dwelltime(dtime=self.wids['dwelltime'].GetValue(),
+    ^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'set_dwelltime'
+Traceback (most recent call last):
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/larch/epics/xrfcontrol.py", line 826, in onStop
+    self.det.stop()
+    ^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'stop'
+Traceback (most recent call last):
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/larch/epics/xrfcontrol.py", line 818, in onStart
+    self.wids['dwelltime'].SetValue(f"{value:.3f}")
+                                       ^^^^^
+NameError: name 'value' is not defined. Did you mean: 'False'?
+Traceback (most recent call last):
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/larch/epics/xrfcontrol.py", line 805, in onMcaSumChoice
+    self.det.set_usesum('accum' in wid.GetStringSelection().lower())
+    ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'set_usesum'
+Traceback (most recent call last):
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/matplotlib/cbook.py", line 361, in process
+    func(*args, **kwargs)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/wxmplot/basepanel.py", line 539, in __onMouseButtonEvent
+    handle_event(event)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/wxmplot/basepanel.py", line 275, in onLeftDown
+    self.cursor_mode_action('leftdown', event=event)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/wxmplot/basepanel.py", line 245, in cursor_mode_action
+    self.cursor_modes[mode][eventname](**kws)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/wxmplot/basepanel.py", line 630, in zoom_leftdown
+    self.report_leftdown(event=event)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/larch/wxlib/xrfdisplay.py", line 391, in on_cursor
+    self.energy_for_zoom = self.mca.energy[ix]
+                           ^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'energy'
+Traceback (most recent call last):
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/matplotlib/cbook.py", line 361, in process
+    func(*args, **kwargs)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/wxmplot/basepanel.py", line 539, in __onMouseButtonEvent
+    handle_event(event)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/larch/wxlib/xrfdisplay.py", line 499, in onLeftUp
+    ezoom = self.mca.energy[ix]
+            ^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'energy'
+Traceback (most recent call last):
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/matplotlib/cbook.py", line 361, in process
+    func(*args, **kwargs)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/wxmplot/basepanel.py", line 539, in __onMouseButtonEvent
+    handle_event(event)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/wxmplot/basepanel.py", line 275, in onLeftDown
+    self.cursor_mode_action('leftdown', event=event)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/wxmplot/basepanel.py", line 245, in cursor_mode_action
+    self.cursor_modes[mode][eventname](**kws)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/wxmplot/basepanel.py", line 630, in zoom_leftdown
+    self.report_leftdown(event=event)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/larch/wxlib/xrfdisplay.py", line 391, in on_cursor
+    self.energy_for_zoom = self.mca.energy[ix]
+                           ^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'energy'
+Traceback (most recent call last):
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/matplotlib/cbook.py", line 361, in process
+    func(*args, **kwargs)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/wxmplot/basepanel.py", line 539, in __onMouseButtonEvent
+    handle_event(event)
+  File "/home/dfhanlon/Desktop/CLS/beamline_development/.venv/lib/python3.12/site-packages/larch/wxlib/xrfdisplay.py", line 499, in onLeftUp
+    ezoom = self.mca.energy[ix]
+            ^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'energy'
