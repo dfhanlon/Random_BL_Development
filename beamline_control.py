@@ -107,7 +107,7 @@ def _qss() -> str:
     return f"""
 * {{
     font-family: "Liberation Sans", "DejaVu Sans", Arial, sans-serif;
-    font-size: 13px;
+    font-size: 15px;
     color: {TEXT};
 }}
 QMainWindow, QWidget#root {{
@@ -123,7 +123,7 @@ QGroupBox {{
     margin-top: 16px;
     padding: 8px 6px 6px 6px;
     font-weight: bold;
-    font-size: 13px;
+    font-size: 15px;
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
@@ -141,7 +141,7 @@ QLineEdit {{
     border-radius: 2px;
     padding: 1px 6px;
     font-family: "Liberation Mono", "DejaVu Sans Mono", monospace;
-    font-size: 14px;
+    font-size: 16px;
     selection-background-color: {BLUE};
 }}
 QLineEdit:focus {{ border: 1px solid {BLUE}; }}
@@ -167,7 +167,7 @@ QProgressBar {{
     border-radius: 2px;
     text-align: right;
     color: #aaa;
-    font-size: 12px;
+    font-size: 14px;
     padding-right: 4px;
 }}
 QProgressBar::chunk {{
@@ -215,7 +215,7 @@ def _value_label(text: str = "--", width: int = 96, mono: bool = True) -> QLabel
     font_family = '"Liberation Mono", "DejaVu Sans Mono", monospace' if mono else "inherit"
     lbl.setStyleSheet(
         f"background-color: {VALBG}; color: #ffffff; "
-        f"font-family: {font_family}; font-size: 14px; "
+        f"font-family: {font_family}; font-size: 16px; "
         f"border: 1px solid {BORDER}; padding: 1px 6px;"
     )
     return lbl
@@ -265,13 +265,13 @@ class DashboardCard(QWidget):
         lay.setSpacing(2)
 
         lbl = QLabel(label)
-        lbl.setStyleSheet(f"color: {DIM}; font-size: 12px; background: transparent; border: none;")
+        lbl.setStyleSheet(f"color: {DIM}; font-size: 14px; background: transparent; border: none;")
         lay.addWidget(lbl)
 
         self.val_lbl = QLabel("--")
         self.val_lbl.setStyleSheet(
             "color: #ffffff; font-family: 'Liberation Mono', 'DejaVu Sans Mono', monospace; "
-            "font-size: 20px; font-weight: bold; background: transparent; border: none;"
+            "font-size: 22px; font-weight: bold; background: transparent; border: none;"
         )
         lay.addWidget(self.val_lbl)
 
@@ -451,7 +451,7 @@ class StatusChip(QWidget):
         self.led = LEDWidget(12, self)
         top.addWidget(self.led, 0, Qt.AlignVCenter)
         name = QLabel(label)
-        name.setStyleSheet("font-weight: bold; font-size: 12px; background: transparent;")
+        name.setStyleSheet("font-weight: bold; font-size: 14px; background: transparent;")
         top.addWidget(name, 1)
         lay.addLayout(top)
 
@@ -460,7 +460,7 @@ class StatusChip(QWidget):
         self.val_lbl.setAlignment(Qt.AlignCenter)
         self.val_lbl.setStyleSheet(
             f"background: {VALBG}; border: 1px solid {BORDER}; "
-            f"font-size: 13px; font-weight: bold; color: {DIM}; padding: 1px 0;"
+            f"font-size: 15px; font-weight: bold; color: {DIM}; padding: 1px 0;"
         )
         lay.addWidget(self.val_lbl)
 
@@ -477,7 +477,7 @@ class StatusChip(QWidget):
         self.val_lbl.setText(text)
         self.val_lbl.setStyleSheet(
             f"background: {VALBG}; border: 1px solid {BORDER}; "
-            f"font-size: 13px; font-weight: bold; color: {color}; padding: 1px 0;"
+            f"font-size: 15px; font-weight: bold; color: {color}; padding: 1px 0;"
         )
 
 
@@ -487,15 +487,15 @@ class FEShutterWidget(QWidget):
     """Large state indicator + Open / Close buttons for the FE shutter."""
 
     _STYLE_OPEN = (
-        "background: #1a6a1a; color: #90ff90; font-size: 16px; font-weight: bold; "
+        "background: #1a6a1a; color: #90ff90; font-size: 18px; font-weight: bold; "
         "border-radius: 4px; border: 1px solid #2aaa2a;"
     )
     _STYLE_CLOSED = (
-        "background: #6a1a1a; color: #ff9090; font-size: 16px; font-weight: bold; "
+        "background: #6a1a1a; color: #ff9090; font-size: 18px; font-weight: bold; "
         "border-radius: 4px; border: 1px solid #aa2a2a;"
     )
     _STYLE_UNKNOWN = (
-        "background: #555555; color: #aaaaaa; font-size: 16px; font-weight: bold; "
+        "background: #555555; color: #aaaaaa; font-size: 18px; font-weight: bold; "
         "border-radius: 4px; border: 1px solid #777777;"
     )
 
@@ -513,7 +513,7 @@ class FEShutterWidget(QWidget):
 
         # Label
         lbl = QLabel("FE Shutter")
-        lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #aaaaaa;")
+        lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #aaaaaa;")
         lay.addWidget(lbl)
 
         # State indicator
@@ -529,7 +529,7 @@ class FEShutterWidget(QWidget):
         open_btn.setStyleSheet(
             "QPushButton { background: #1a4a1a; color: #88dd88; "
             "border: 1px solid #2a7a2a; border-radius: 4px; "
-            "font-weight: bold; font-size: 14px; }"
+            "font-weight: bold; font-size: 16px; }"
             "QPushButton:hover  { background: #2a6a2a; }"
             "QPushButton:pressed{ background: #1a8a1a; }"
         )
@@ -542,7 +542,7 @@ class FEShutterWidget(QWidget):
         close_btn.setStyleSheet(
             "QPushButton { background: #4a1a1a; color: #dd8888; "
             "border: 1px solid #7a2a2a; border-radius: 4px; "
-            "font-weight: bold; font-size: 14px; }"
+            "font-weight: bold; font-size: 16px; }"
             "QPushButton:hover  { background: #6a2a2a; }"
             "QPushButton:pressed{ background: #8a1a1a; }"
         )
@@ -598,7 +598,7 @@ class ControlRow(QWidget):
         # Label
         lbl = QLabel(label)
         lbl.setFixedWidth(128)
-        lbl.setStyleSheet("font-size: 13px;")
+        lbl.setStyleSheet("font-size: 15px;")
         lay.addWidget(lbl)
 
         # Readback
@@ -620,7 +620,7 @@ class ControlRow(QWidget):
         # Units
         units_lbl = QLabel(cfg.get("units") or _DEFAULT_UNITS.get(label, ""))
         units_lbl.setFixedWidth(52)
-        units_lbl.setStyleSheet(f"color: {DIM}; font-size: 12px;")
+        units_lbl.setStyleSheet(f"color: {DIM}; font-size: 14px;")
         lay.addWidget(units_lbl)
 
         # Set button
@@ -723,16 +723,20 @@ class IonChamberCard(QWidget):
         self.label = label
         self.cfg = cfg
         self.bridge = bridge
-        self._read_pv      = cfg.get("read_pv") or ""
-        self._gain_up_pv   = cfg.get("gain_up_pv") or ""
-        self._gain_dn_pv   = cfg.get("gain_down_pv") or ""
+        self._read_pv       = cfg.get("read_pv") or ""
+        self._gain_up_pv    = cfg.get("gain_up_pv") or ""
+        self._gain_dn_pv    = cfg.get("gain_down_pv") or ""
+        self._unit_num_pv   = cfg.get("unit_num_pv") or ""
+        self._unit_text_pv  = cfg.get("unit_text_pv") or ""
         derived = cfg.get("derived", {})
-        self._delay_pv     = derived.get("delay_pv") or ""
-        self._scale        = derived.get("scale", 1.0)
+        self._delay_pv      = derived.get("delay_pv") or ""
+        self._scale         = derived.get("scale", 1.0)
         self._derived_units = derived.get("units", "V")
-        self._mode         = "counts"   # "counts" | "ph/s"
-        self._counts       = None
-        self._delay_ms     = None
+        self._mode          = "counts"   # "counts" | "ph/s"
+        self._counts        = None
+        self._delay_ms      = None
+        self._gain_num      = None
+        self._gain_text     = None
         self.history_times: deque = deque(maxlen=600)
         self.history_values: deque = deque(maxlen=600)
 
@@ -751,24 +755,24 @@ class IonChamberCard(QWidget):
 
         name_row = QHBoxLayout()
         name_lbl = QLabel(f"<b>{label}</b>")
-        name_lbl.setStyleSheet("font-size: 14px; background: transparent;")
+        name_lbl.setStyleSheet("font-size: 16px; background: transparent;")
         name_row.addWidget(name_lbl)
         name_row.addStretch()
         self.unit_lbl = QLabel(self._derived_units)
-        self.unit_lbl.setStyleSheet(f"color: {DIM}; font-size: 12px; background: transparent;")
+        self.unit_lbl.setStyleSheet(f"color: {DIM}; font-size: 14px; background: transparent;")
         name_row.addWidget(self.unit_lbl)
         left.addLayout(name_row)
 
         cts_row = QHBoxLayout()
         cts_hdr = QLabel("Counts")
-        cts_hdr.setStyleSheet(f"color: {DIM}; font-size: 11px; background: transparent;")
+        cts_hdr.setStyleSheet(f"color: {DIM}; font-size: 13px; background: transparent;")
         cts_row.addWidget(cts_hdr)
         cts_row.addStretch()
         self.counts_val = QLabel("--")
         self.counts_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.counts_val.setStyleSheet(
             f"background: {VALBG}; color: #cc4444; "
-            f"font-family: 'Liberation Mono', monospace; font-size: 17px; font-weight: bold; "
+            f"font-family: 'Liberation Mono', monospace; font-size: 19px; font-weight: bold; "
             f"border: 1px solid {BORDER}; padding: 1px 6px; min-width: 110px;"
         )
         cts_row.addWidget(self.counts_val)
@@ -776,14 +780,14 @@ class IonChamberCard(QWidget):
 
         drv_row = QHBoxLayout()
         self.drv_hdr = QLabel("Voltage")
-        self.drv_hdr.setStyleSheet(f"color: {DIM}; font-size: 11px; background: transparent;")
+        self.drv_hdr.setStyleSheet(f"color: {DIM}; font-size: 13px; background: transparent;")
         drv_row.addWidget(self.drv_hdr)
         drv_row.addStretch()
         self.derived_val = QLabel("--")
         self.derived_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.derived_val.setStyleSheet(
             f"background: {VALBG}; color: #7a7aaa; "
-            f"font-family: 'Liberation Mono', monospace; font-size: 14px; "
+            f"font-family: 'Liberation Mono', monospace; font-size: 16px; "
             f"border: 1px solid {BORDER}; padding: 1px 6px; min-width: 110px;"
         )
         drv_row.addWidget(self.derived_val)
@@ -799,31 +803,40 @@ class IonChamberCard(QWidget):
         self.mode_btn.setFixedSize(44, 22)
         self.mode_btn.setStyleSheet(
             f"QPushButton {{ background: #2a4a2a; color: #90ee90; "
-            f"border: 1px solid #3a6a3a; border-radius: 3px; font-size: 12px; }}"
+            f"border: 1px solid #3a6a3a; border-radius: 3px; font-size: 14px; }}"
             f"QPushButton:hover {{ background: #3a6a3a; }}"
         )
         self.mode_btn.clicked.connect(self._toggle_mode)
         right.addWidget(self.mode_btn, 0, Qt.AlignCenter)
 
         gain_row = QHBoxLayout()
-        gain_row.setSpacing(3)
-        minus_btn = QPushButton("−")
-        minus_btn.setFixedSize(24, 22)
-        minus_btn.setStyleSheet(
+        gain_row.setSpacing(4)
+
+        _btn_ss = (
             f"QPushButton {{ background: {PANEL}; color: {TEXT}; "
-            f"border: 1px solid {BORDER}; border-radius: 3px; font-size: 16px; font-weight: bold; }}"
+            f"border: 1px solid {BORDER}; border-radius: 3px; "
+            f"font-size: 18px; font-weight: bold; padding: 0 4px; }}"
             f"QPushButton:hover {{ background: {BTNHOV}; }}"
         )
+
+        minus_btn = QPushButton("−")
+        minus_btn.setFixedSize(28, 26)
+        minus_btn.setStyleSheet(_btn_ss)
         minus_btn.clicked.connect(lambda: self.bridge.put(self._gain_dn_pv, 1) if self._gain_dn_pv else None)
         gain_row.addWidget(minus_btn)
 
-        gain_lbl = QLabel("gain")
-        gain_lbl.setStyleSheet(f"color: {DIM}; font-size: 11px; background: transparent;")
-        gain_row.addWidget(gain_lbl)
+        self.gain_val = QLabel("--")
+        self.gain_val.setAlignment(Qt.AlignCenter)
+        self.gain_val.setStyleSheet(
+            f"color: {TEXT}; font-size: 13px; font-weight: bold; "
+            f"background: {VALBG}; border: 1px solid {BORDER}; "
+            f"border-radius: 3px; padding: 1px 5px; min-width: 72px;"
+        )
+        gain_row.addWidget(self.gain_val)
 
         plus_btn = QPushButton("+")
-        plus_btn.setFixedSize(24, 22)
-        plus_btn.setStyleSheet(minus_btn.styleSheet())
+        plus_btn.setFixedSize(28, 26)
+        plus_btn.setStyleSheet(_btn_ss)
         plus_btn.clicked.connect(lambda: self.bridge.put(self._gain_up_pv, 1) if self._gain_up_pv else None)
         gain_row.addWidget(plus_btn)
         right.addLayout(gain_row)
@@ -837,6 +850,12 @@ class IonChamberCard(QWidget):
         if self._delay_pv:
             bridge.updated.connect(self._on_delay)
             bridge.subscribe(self._delay_pv)
+        if self._unit_num_pv or self._unit_text_pv:
+            bridge.updated.connect(self._on_gain_pv)
+            if self._unit_num_pv:
+                bridge.subscribe(self._unit_num_pv)
+            if self._unit_text_pv:
+                bridge.subscribe(self._unit_text_pv)
 
     def _on_counts(self, pvname: str, value):
         if pvname != self._read_pv:
@@ -855,6 +874,26 @@ class IonChamberCard(QWidget):
             return
         self._delay_ms = value
         self._refresh()
+
+    def _on_gain_pv(self, pvname: str, value):
+        if pvname == self._unit_num_pv:
+            self._gain_num = value
+        elif pvname == self._unit_text_pv:
+            self._gain_text = str(value).strip() if value is not None else None
+        else:
+            return
+        self._refresh_gain()
+
+    def _refresh_gain(self):
+        parts = []
+        if self._gain_num is not None:
+            try:
+                parts.append(str(int(float(self._gain_num))))
+            except (TypeError, ValueError):
+                parts.append(str(self._gain_num))
+        if self._gain_text:
+            parts.append(self._gain_text)
+        self.gain_val.setText(" ".join(parts) if parts else "--")
 
     def _refresh(self):
         c = self._counts
@@ -924,7 +963,7 @@ class CryoBar(QWidget):
         self.val_lbl = QLabel(f"-- {self._units}")
         self.val_lbl.setFixedWidth(96)
         self.val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.val_lbl.setStyleSheet(f"font-family: monospace; font-size: 13px;")
+        self.val_lbl.setStyleSheet(f"font-family: monospace; font-size: 15px;")
         lay.addWidget(self.val_lbl)
 
         if self._pvname:
@@ -1005,7 +1044,7 @@ class CryostatPanel(QGroupBox):
             pb.setFixedSize(38, 22)
             pb.setStyleSheet(
                 f"QPushButton {{ background: #3a3a5a; color: #aaaad0; "
-                f"border: 1px solid #4a4a7a; border-radius: 3px; font-size: 12px; }}"
+                f"border: 1px solid #4a4a7a; border-radius: 3px; font-size: 14px; }}"
                 f"QPushButton:hover {{ background: #4a4a7a; }}"
             )
             pb.clicked.connect(lambda _, v=val: self.bridge.put(self._tsp_write, float(v)))
@@ -1014,11 +1053,11 @@ class CryostatPanel(QGroupBox):
         t_row.addStretch()
 
         self.tset_lbl = QLabel("Tset: --")
-        self.tset_lbl.setStyleSheet(f"font-family: monospace; font-size: 13px;")
+        self.tset_lbl.setStyleSheet(f"font-family: monospace; font-size: 15px;")
         t_row.addWidget(self.tset_lbl)
 
         self.tread_lbl = QLabel("Tread: --")
-        self.tread_lbl.setStyleSheet(f"font-family: monospace; font-size: 13px;")
+        self.tread_lbl.setStyleSheet(f"font-family: monospace; font-size: 15px;")
         t_row.addWidget(self.tread_lbl)
 
         self.ah_btn = QPushButton("AutoHeat  OFF")
@@ -1252,17 +1291,17 @@ class FurnacePanel(QWidget):
             pb.setFixedSize(38, 22)
             pb.setStyleSheet(
                 "QPushButton { background: #5a3a1a; color: #e0b080; "
-                "border: 1px solid #7a5a2a; border-radius: 3px; font-size: 12px; }"
+                "border: 1px solid #7a5a2a; border-radius: 3px; font-size: 14px; }"
                 "QPushButton:hover { background: #7a5a2a; }"
             )
             pb.clicked.connect(lambda _, v=val: self.bridge.put(self._tsp_write, float(v)))
             tsp_row.addWidget(pb)
         tsp_row.addStretch()
         self.tset_lbl = QLabel("SP: --")
-        self.tset_lbl.setStyleSheet("font-family: monospace; font-size: 13px;")
+        self.tset_lbl.setStyleSheet("font-family: monospace; font-size: 15px;")
         tsp_row.addWidget(self.tset_lbl)
         self.tread_lbl = QLabel("T: --")
-        self.tread_lbl.setStyleSheet("font-family: monospace; font-size: 13px;")
+        self.tread_lbl.setStyleSheet("font-family: monospace; font-size: 15px;")
         tsp_row.addWidget(self.tread_lbl)
         lay.addLayout(tsp_row)
         lay.addWidget(_sep())
@@ -1282,7 +1321,7 @@ class FurnacePanel(QWidget):
         hr_row.addWidget(hr_set)
         hr_row.addStretch()
         self.hr_lbl = QLabel("Rate: --")
-        self.hr_lbl.setStyleSheet("font-family: monospace; font-size: 13px;")
+        self.hr_lbl.setStyleSheet("font-family: monospace; font-size: 15px;")
         hr_row.addWidget(self.hr_lbl)
         lay.addLayout(hr_row)
         lay.addWidget(_sep())
@@ -1365,18 +1404,18 @@ class BeamlineControlWindow(QMainWindow):
         hdr = QHBoxLayout()
         hdr.setSpacing(10)
         title = QLabel("<b>Beamline 1607-7-I21  Control</b>")
-        title.setStyleSheet("font-size: 18px; color: #e0e0e0; background: transparent;")
+        title.setStyleSheet("font-size: 20px; color: #e0e0e0; background: transparent;")
         hdr.addWidget(title)
         hdr.addStretch()
         mode_lbl = QLabel("●  DUMMY MODE — no EPICS connection")
-        mode_lbl.setStyleSheet(f"color: {MINOR}; font-size: 13px; font-weight: bold; background: transparent;")
+        mode_lbl.setStyleSheet(f"color: {MINOR}; font-size: 15px; font-weight: bold; background: transparent;")
         hdr.addWidget(mode_lbl)
 
         # Ring current readback
         _rc_pv = (config.get("status") or {}).get("Ring Status", {}).get("read_pv", "PCT1402-01:mA:fbk")
         rc_lbl = QLabel("Ring: -- mA")
         rc_lbl.setStyleSheet(
-            f"font-family: monospace; font-size: 15px; font-weight: bold; "
+            f"font-family: monospace; font-size: 17px; font-weight: bold; "
             f"color: {OK}; background: transparent;"
         )
         def _on_rc(pvname, value, _lbl=rc_lbl):
@@ -1454,7 +1493,7 @@ class BeamlineControlWindow(QMainWindow):
         hdr_row.setSpacing(4)
         for txt, w in [("Parameter", 128), ("Readback", 96), ("Setpoint", 80), ("Units", 52), ("", 40)]:
             h = QLabel(txt)
-            h.setStyleSheet(f"color: {DIM}; font-size: 12px; font-weight: bold; background: transparent;")
+            h.setStyleSheet(f"color: {DIM}; font-size: 14px; font-weight: bold; background: transparent;")
             h.setFixedWidth(w)
             hdr_row.addWidget(h)
         hdr_row.addStretch()
@@ -1467,7 +1506,7 @@ class BeamlineControlWindow(QMainWindow):
             cg.addWidget(_sep())
             sh = QLabel(title)
             sh.setStyleSheet(
-                f"color: {DIM}; font-size: 12px; font-weight: bold; "
+                f"color: {DIM}; font-size: 14px; font-weight: bold; "
                 f"background: transparent; padding: 3px 4px 1px 4px;"
             )
             cg.addWidget(sh)
@@ -1547,7 +1586,7 @@ class BeamlineControlWindow(QMainWindow):
                     border: 1px solid {BORDER};
                     border-bottom: none;
                     padding: 4px 12px;
-                    font-size: 13px;
+                    font-size: 15px;
                 }}
                 QTabBar::tab:selected {{
                     background: {PANEL};
@@ -1580,7 +1619,7 @@ class BeamlineControlWindow(QMainWindow):
         footer.addWidget(clear_btn)
         footer.addStretch()
         info = QLabel(f"pvs.yaml: {PV_CONFIG_FILE.name}  |  pyepics {getattr(epics, '__version__', 'n/a')}")
-        info.setStyleSheet(f"color: {DIM}; font-size: 12px; background: transparent;")
+        info.setStyleSheet(f"color: {DIM}; font-size: 14px; background: transparent;")
         footer.addWidget(info)
         root.addLayout(footer)
 
