@@ -93,7 +93,7 @@ elif _pre_args.sim:
 
 from PyQt5.QtCore import Qt, QTimer                                  # noqa: E402
 from PyQt5.QtWidgets import (                                        # noqa: E402
-    QAction, QApplication, QLabel, QMessageBox, QToolBar,
+    QAction, QApplication, QLabel, QToolBar,
 )
 from beamline_control import BeamlineControlWindow, _qss             # noqa: E402
 
@@ -143,6 +143,38 @@ class XRFProcess:
             stderr=subprocess.STDOUT,
         )
 
+    def raise_window(self) -> bool:
+        """Bring the XRF viewer window to the foreground. Returns True on success."""
+        if not self.is_running():
+            return False
+        pid = self._proc.pid
+        try:
+            # wmctrl: raise any window belonging to this PID
+            result = subprocess.run(
+                ["wmctrl", "-i", "-a",
+                 subprocess.run(
+                     ["xdotool", "search", "--pid", str(pid)],
+                     capture_output=True, text=True,
+                 ).stdout.strip().split("\n")[0]],
+                capture_output=True,
+            )
+            return result.returncode == 0
+        except FileNotFoundError:
+            pass
+        try:
+            # Fallback: xdotool alone
+            wids = subprocess.run(
+                ["xdotool", "search", "--pid", str(pid)],
+                capture_output=True, text=True,
+            ).stdout.strip().split("\n")
+            if wids and wids[0]:
+                subprocess.run(["xdotool", "windowactivate", "--sync", wids[0]],
+                               capture_output=True)
+                return True
+        except FileNotFoundError:
+            pass
+        return False
+
     def terminate(self) -> None:
         if self.is_running():
             self._proc.terminate()
@@ -171,8 +203,11 @@ class CLSMainWindow(BeamlineControlWindow):
         self._build_xrf_toolbar()
         self.setWindowTitle("CLS 1607-7-I21 — Beamline Controls")
 
+        # Launch the XRF viewer immediately so it's ready when needed.
+        self._xrf.launch()
+
         # Poll every 1.5 s so the toolbar status stays accurate even if the
-        # user closes the XRF window directly.
+        # user closes the XRF window directly (it will be re-launched on click).
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._refresh_xrf_ui)
         self._poll_timer.start(1500)
@@ -203,13 +238,13 @@ class CLSMainWindow(BeamlineControlWindow):
         """)
         self.addToolBar(Qt.TopToolBarArea, tb)
 
-        self._xrf_action = QAction("Open XRF Viewer", self)
+        self._xrf_action = QAction("Show XRF Viewer", self)
         self._xrf_action.triggered.connect(self._on_xrf_clicked)
         tb.addAction(self._xrf_action)
 
-        self._xrf_status = QLabel("  ●  XRF viewer: not running", self)
+        self._xrf_status = QLabel("  ●  XRF viewer: starting…", self)
         self._xrf_status.setStyleSheet(
-            "color: #666666; font-size: 12px; background: transparent; padding-left: 4px;"
+            "color: #888888; font-size: 12px; background: transparent; padding-left: 4px;"
         )
         tb.addWidget(self._xrf_status)
 
@@ -217,28 +252,21 @@ class CLSMainWindow(BeamlineControlWindow):
 
     def _on_xrf_clicked(self) -> None:
         if self._xrf.is_running():
-            reply = QMessageBox.question(
-                self, "XRF Viewer",
-                "The XRF viewer is already running.\nStop it?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply == QMessageBox.Yes:
-                self._xrf.terminate()
-                self._refresh_xrf_ui()
+            # Try to raise the existing window; fall back to a no-op if the
+            # window-manager tools aren't installed.
+            self._xrf.raise_window()
         else:
+            # User closed the XRF window manually — relaunch it.
             self._xrf.launch()
             self._refresh_xrf_ui()
 
     def _refresh_xrf_ui(self) -> None:
         if self._xrf.is_running():
-            self._xrf_action.setText("Stop XRF Viewer")
             self._xrf_status.setText("  ●  XRF viewer: running")
             self._xrf_status.setStyleSheet(
                 "color: #00c800; font-size: 12px; background: transparent; padding-left: 4px;"
             )
         else:
-            self._xrf_action.setText("Open XRF Viewer")
             self._xrf_status.setText("  ●  XRF viewer: not running")
             self._xrf_status.setStyleSheet(
                 "color: #666666; font-size: 12px; background: transparent; padding-left: 4px;"
