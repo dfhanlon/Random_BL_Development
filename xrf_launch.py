@@ -180,7 +180,7 @@ detectors = [
     for d in det_dicts
 ]
 
-mode_tag = "DUMMY" if args.dummy else ("SIM" if args.sim else "LIVE")
+mode_tag = "DUMMY" if args.dummy else ("SIM" if args.sim else "")
 
 # ── Ge-detectors-only frame (no Beamline Controls tab) ───────────────────────
 
@@ -277,7 +277,7 @@ class GeOnlyApp(Xspress3ViewerApp):
 app = GeOnlyApp(
     detectors=detectors,
     size=(1300, 900),
-    title=f"XAS XRF Viewer — CLS 1607-7-I21  [{mode_tag}]",
+    title=f"XAS XRF Viewer — CLS 1607-7-I21" + (f"  [{mode_tag}]" if mode_tag else ""),
     use_sim=args.sim,
 )
 app.MainLoop()

@@ -31,6 +31,7 @@ if str(PROJECT_DIR) not in sys.path:
 
 os.environ.setdefault("LARCHDIR",    str(PROJECT_DIR / ".larch"))
 os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_DIR / ".mplconfig"))
+os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
 # ── early arg parsing (must happen before Qt / beamline_control imports) ──────
 
@@ -197,11 +198,18 @@ class CLSMainWindow(BeamlineControlWindow):
     starts / stops the wx/xraylarch XRF viewer subprocess (xrf_launch.py).
     """
 
+    _HEADER_SHUTTER = {
+        "status_key": "POE Shutter",
+        "open_key":   "Open POE Shutter",
+        "close_key":  "Close POE Shutter",
+        "label":      "POE Shutter",
+    }
+
     def __init__(self, *, use_sim: bool = False, use_dummy: bool = False):
         super().__init__()
         self._xrf = XRFProcess(use_sim=use_sim, use_dummy=use_dummy)
         self._build_xrf_toolbar()
-        self.setWindowTitle("CLS 1607-7-I21 — Beamline Controls")
+        self.setWindowTitle("Beamline Controls")
 
         # Launch the XRF viewer immediately so it's ready when needed.
         self._xrf.launch()
@@ -320,3 +328,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    

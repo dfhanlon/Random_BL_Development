@@ -107,7 +107,7 @@ def _qss() -> str:
     return f"""
 * {{
     font-family: "Liberation Sans", "DejaVu Sans", Arial, sans-serif;
-    font-size: 15px;
+    font-size: 19px;
     color: {TEXT};
 }}
 QMainWindow, QWidget#root {{
@@ -120,16 +120,16 @@ QGroupBox {{
     background-color: {PANEL};
     border: 1px solid {BORDER};
     border-radius: 3px;
-    margin-top: 16px;
-    padding: 8px 6px 6px 6px;
+    margin-top: 20px;
+    padding: 12px 8px 10px 8px;
     font-weight: bold;
-    font-size: 15px;
+    font-size: 19px;
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 8px;
-    padding: 0 4px;
+    left: 10px;
+    padding: 0 6px;
     background-color: {PANEL};
     color: {TEXT};
 }}
@@ -139,9 +139,9 @@ QLineEdit {{
     color: #ffffff;
     border: 1px solid {BORDER};
     border-radius: 2px;
-    padding: 1px 6px;
+    padding: 3px 8px;
     font-family: "Liberation Mono", "DejaVu Sans Mono", monospace;
-    font-size: 16px;
+    font-size: 19px;
     selection-background-color: {BLUE};
 }}
 QLineEdit:focus {{ border: 1px solid {BLUE}; }}
@@ -150,8 +150,8 @@ QPushButton {{
     color: {TEXT};
     border: 1px solid {BORDER};
     border-radius: 3px;
-    padding: 2px 8px;
-    min-height: 22px;
+    padding: 4px 10px;
+    min-height: 28px;
 }}
 QPushButton:hover {{
     background-color: {BTNHOV};
@@ -167,7 +167,7 @@ QProgressBar {{
     border-radius: 2px;
     text-align: right;
     color: #aaa;
-    font-size: 14px;
+    font-size: 18px;
     padding-right: 4px;
 }}
 QProgressBar::chunk {{
@@ -215,7 +215,7 @@ def _value_label(text: str = "--", width: int = 96, mono: bool = True) -> QLabel
     font_family = '"Liberation Mono", "DejaVu Sans Mono", monospace' if mono else "inherit"
     lbl.setStyleSheet(
         f"background-color: {VALBG}; color: #ffffff; "
-        f"font-family: {font_family}; font-size: 16px; "
+        f"font-family: {font_family}; font-size: 18px; "
         f"border: 1px solid {BORDER}; padding: 1px 6px;"
     )
     return lbl
@@ -224,14 +224,14 @@ def _value_label(text: str = "--", width: int = 96, mono: bool = True) -> QLabel
 def _btn(text: str, width: int | None = None, color: str = BTN,
          border: str = BORDER, text_color: str = TEXT, bold: bool = False) -> QPushButton:
     b = QPushButton(text)
-    b.setFixedHeight(22)
+    b.setFixedHeight(32)
     if width:
         b.setFixedWidth(width)
     weight = "bold" if bold else "normal"
     b.setStyleSheet(
         f"QPushButton {{ background-color: {color}; color: {text_color}; "
         f"border: 1px solid {border}; border-radius: 3px; "
-        f"padding: 2px 6px; font-weight: {weight}; }}"
+        f"padding: 4px 8px; font-weight: {weight}; }}"
         f"QPushButton:hover {{ background-color: {_lighten(color)}; }}"
         f"QPushButton:pressed {{ background-color: {BLUE}; }}"
     )
@@ -261,17 +261,17 @@ class DashboardCard(QWidget):
             f"background: {PANEL}; border: 1px solid {BORDER}; border-radius: 4px;"
         )
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 6, 10, 6)
-        lay.setSpacing(2)
+        lay.setContentsMargins(16, 10, 16, 10)
+        lay.setSpacing(6)
 
         lbl = QLabel(label)
-        lbl.setStyleSheet(f"color: {DIM}; font-size: 14px; background: transparent; border: none;")
+        lbl.setStyleSheet(f"color: {DIM}; font-size: 16px; background: transparent; border: none;")
         lay.addWidget(lbl)
 
         self.val_lbl = QLabel("--")
         self.val_lbl.setStyleSheet(
             "color: #ffffff; font-family: 'Liberation Mono', 'DejaVu Sans Mono', monospace; "
-            "font-size: 22px; font-weight: bold; background: transparent; border: none;"
+            "font-size: 24px; font-weight: bold; background: transparent; border: none;"
         )
         lay.addWidget(self.val_lbl)
 
@@ -331,38 +331,110 @@ class LEDWidget(QWidget):
 # ── PV bridge (thread-safe Qt signal dispatch) ────────────────────────────────
 
 class PVBridge(QObject):
-    """Owns all epics.PV objects and re-emits their callbacks as Qt signals."""
+    """
+    Owns all epics.PV objects and re-emits their callbacks as Qt signals.
 
-    updated = pyqtSignal(str, object)   # (pvname, value)
+    subscribe() is safe to call at construction time.  Actual epics.PV
+    objects are created in a background thread after the first event-loop
+    tick so the main window appears immediately without waiting for CA
+    context initialisation or network searches.
+
+    _dispatch() may be called from the CA background thread; PyQt5
+    automatically queues cross-thread signal emissions so all connected
+    slots run in the main thread.
+    """
+
+    updated       = pyqtSignal(str, object)  # (pvname, value)
+    _poll_request = pyqtSignal(str)          # internal: schedule a seed-poll in main thread
 
     def __init__(self):
         super().__init__()
-        self._pvs: dict[str, object] = {}
-        self._handles: list[tuple] = []   # (pv, cb_idx)
+        self._pvs:     dict[str, object] = {}
+        self._handles: list[tuple]       = []   # (pv, cb_idx)
+        self._pending: list[str]         = []   # queued before connect thread starts
+        self._lock = threading.Lock()
+        # _poll_request is emitted from the background thread; the slot runs in
+        # the main thread (where QTimer is safe to use).
+        self._poll_request.connect(
+            lambda p: QTimer.singleShot(400, lambda: self._poll_current(p))
+        )
+        # Kick off PV connections after the event loop starts (window already visible).
+        QTimer.singleShot(0, self._start_connect_thread)
+
+    # ── public API ────────────────────────────────────────────────────────────
 
     def subscribe(self, pvname: str):
-        if not pvname or pvname in self._pvs:
+        if not pvname:
             return
-        pv = epics.PV(pvname, auto_monitor=True)
-        self._pvs[pvname] = pv
-        idx = pv.add_callback(self._dispatch)
-        self._handles.append((pv, idx))
+        with self._lock:
+            if pvname not in self._pvs and pvname not in self._pending:
+                self._pending.append(pvname)
 
     def put(self, pvname: str, value):
         if not pvname:
             return
-        pv = self._pvs.get(pvname)
-        if pv is None:
-            # Write-only PVs are never subscribed — create/fetch on first use
-            pv = epics.PV(pvname)
-            self._pvs[pvname] = pv
+        with self._lock:
+            pv = self._pvs.get(pvname)
+            if pv is None:
+                # Write-only or not-yet-connected PV — create on demand.
+                pv = epics.PV(pvname)
+                self._pvs[pvname] = pv
         pv.put(value, wait=False)
 
-    def _dispatch(self, pvname="", value=None, **_):
-        self.updated.emit(pvname, value)
+    # ── background connect thread ─────────────────────────────────────────────
+
+    def _start_connect_thread(self):
+        t = threading.Thread(target=self._connect_all, daemon=True, name="pvbridge-connect")
+        t.start()
+
+    def _connect_all(self):
+        """Create epics.PV objects for every queued name (runs off the main thread)."""
+        with self._lock:
+            names = list(self._pending)
+            self._pending.clear()
+
+        for pvname in names:
+            pv = epics.PV(pvname, auto_monitor=True)
+            with self._lock:
+                self._pvs[pvname] = pv
+            idx = pv.add_callback(self._dispatch)
+            with self._lock:
+                self._handles.append((pv, idx))
+            # Ask the main thread to schedule the seed poll (QTimer is not safe
+            # to call directly from a plain threading.Thread).
+            self._poll_request.emit(pvname)
+
+    def _poll_current(self, pvname: str):
+        with self._lock:
+            pv = self._pvs.get(pvname)
+        if pv is None:
+            return
+        try:
+            v = pv.get()
+            cv = getattr(pv, "char_value", None)
+            if v is not None:
+                self._dispatch(pvname=pvname, value=v, char_value=cv)
+        except Exception:
+            pass
+
+    # ── CA callback (may arrive from CA thread) ───────────────────────────────
+
+    def _dispatch(self, pvname="", value=None, char_value=None, charvalue=None, **_):
+        # Use char_value only when it is a genuine string/enum label (e.g.
+        # "Open", "Closed", "nA/V").  For numeric PVs, char_value often
+        # includes engineering units ("12345 cts", "140 mA") which breaks
+        # float() parsing in every downstream widget — use the raw value instead.
+        cv = (char_value or charvalue or "").strip()
+        if cv and not (cv[0].isdigit() or cv[0] in "+-.\t "):
+            display = cv          # true string label → use it
+        else:
+            display = value       # numeric or empty → use raw value
+        self.updated.emit(pvname, display)
 
     def cleanup(self):
-        for pv, idx in self._handles:
+        with self._lock:
+            handles = list(self._handles)
+        for pv, idx in handles:
             try:
                 pv.remove_callback(idx)
             except Exception:
@@ -396,7 +468,7 @@ def load_pv_config() -> dict:
 # ── Status chip ───────────────────────────────────────────────────────────────
 
 _GOOD_WORDS = {"OPEN", "ON", "OK", "READY", "ENABLED", "IN", "NITROGEN", "HIGH"}
-_BAD_WORDS  = {"CLOSED", "OFF", "BAD", "ERROR", "FAULT", "ALARM", "LOW"}
+_BAD_WORDS  = {"CLOSED", "CLOSE", "OFF", "BAD", "ERROR", "FAULT", "ALARM", "LOW"}
 _WARN_WORDS = {"MOVING", "BUSY", "WARN", "WARNING", "STANDBY", "ARGON"}
 
 _STATE_COLOR = {"ok": OK, "major": MAJOR, "minor": MINOR, "attention": ATTN, "disconn": DIM}
@@ -410,8 +482,9 @@ def _evaluate_status(value, cfg: dict) -> tuple[str, str]:
         try:
             fv = float(value)
             cmp = cfg.get("status_threshold_comparison", "gt")
-            good = (fv > threshold if cmp == "gt" else
-                    fv < threshold if cmp == "lt" else
+            good = (fv > threshold  if cmp == "gt"  else
+                    fv < threshold  if cmp == "lt"  else
+                    fv != threshold if cmp == "eq"  else   # eq: equal=bad, unequal=good
                     fv >= threshold)
             label = cfg.get("status_good_label", "OK") if good else cfg.get("status_bad_label", "BAD")
             return ("ok" if good else "major"), label
@@ -427,57 +500,161 @@ def _evaluate_status(value, cfg: dict) -> tuple[str, str]:
     return "disconn", text or "--"
 
 
+def _resolve_state_map_color(color_name: str) -> str:
+    """Map pvs.yaml color names (OK, MAJOR, RGB(...), etc.) to hex strings."""
+    _MAP = {
+        "OK":        OK,
+        "MAJOR":     MAJOR,
+        "MINOR":     MINOR,
+        "Attention": ATTN,
+        "ActiveText": TEXT,
+        "disconn":   DIM,
+    }
+    if color_name in _MAP:
+        return _MAP[color_name]
+    if color_name.upper().startswith("RGB("):
+        try:
+            r, g, b = [int(x.strip()) for x in color_name[4:-1].split(",")]
+            return f"#{r:02x}{g:02x}{b:02x}"
+        except Exception:
+            pass
+    return DIM
+
+
 class StatusChip(QWidget):
-    """LED + label status indicator — mirrors a Phoebus LED widget."""
+    """LED + label status indicator — mirrors a Phoebus LED widget.
+
+    Handles three config shapes from pvs.yaml:
+      • read_pv + optional threshold / good+bad labels  (simple)
+      • derived: {pv_1, pv_2, operation} + threshold    (two-PV arithmetic)
+      • derived: {pvs: {...}, expression: "..."}
+        + state_map: {"value": {label, color}}           (multi-PV expression)
+    """
 
     def __init__(self, label: str, cfg: dict, bridge: PVBridge, parent=None):
         super().__init__(parent)
-        self.cfg = cfg
-        self._pvname = cfg.get("read_pv") or ""
+        self.cfg        = cfg
+        self._state_map = cfg.get("state_map", {})
+        self._derived   = cfg.get("derived")
 
-        self.setFixedWidth(110)
+        self.setFixedWidth(136)
         self.setStyleSheet(
             f"StatusChip {{ background: {PANEL}; border: 1px solid {BORDER}; "
             f"border-radius: 3px; }}"
         )
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(6, 4, 6, 4)
-        lay.setSpacing(2)
+        lay.setContentsMargins(8, 7, 8, 7)
+        lay.setSpacing(4)
 
-        # LED + name row
         top = QHBoxLayout()
-        top.setSpacing(4)
+        top.setSpacing(6)
         self.led = LEDWidget(12, self)
         top.addWidget(self.led, 0, Qt.AlignVCenter)
-        name = QLabel(label)
-        name.setStyleSheet("font-weight: bold; font-size: 14px; background: transparent;")
-        top.addWidget(name, 1)
+        name_lbl = QLabel(label)
+        name_lbl.setStyleSheet("font-weight: bold; font-size: 16px; background: transparent;")
+        top.addWidget(name_lbl, 1)
         lay.addLayout(top)
 
-        # Value text
         self.val_lbl = QLabel("--")
         self.val_lbl.setAlignment(Qt.AlignCenter)
         self.val_lbl.setStyleSheet(
             f"background: {VALBG}; border: 1px solid {BORDER}; "
-            f"font-size: 15px; font-weight: bold; color: {DIM}; padding: 1px 0;"
+            f"font-size: 17px; font-weight: bold; color: {DIM}; padding: 1px 0;"
         )
         lay.addWidget(self.val_lbl)
 
-        if self._pvname:
+        if self._derived:
+            # Build pv-name → variable-name mapping and subscribe to all PVs
+            self._pv_to_var: dict[str, str] = {}
+            self._var_values: dict[str, float | None] = {}
+            pvs_dict = self._derived.get("pvs")
+            if pvs_dict:
+                for var, pvname in pvs_dict.items():
+                    self._pv_to_var[pvname] = var
+                    self._var_values[var] = None
+                    bridge.subscribe(pvname)
+            else:
+                for key in ("pv_1", "pv_2"):
+                    pvname = self._derived.get(key, "")
+                    if pvname:
+                        self._pv_to_var[pvname] = key
+                        self._var_values[key] = None
+                        bridge.subscribe(pvname)
+            self._pvname = ""
             bridge.updated.connect(self._on_update)
-            bridge.subscribe(self._pvname)
+        else:
+            self._pvname = cfg.get("read_pv") or ""
+            self._pv_to_var = {}
+            self._var_values = {}
+            if self._pvname:
+                bridge.updated.connect(self._on_update)
+                bridge.subscribe(self._pvname)
 
     def _on_update(self, pvname: str, value):
-        if pvname != self._pvname:
+        if self._derived:
+            var = self._pv_to_var.get(pvname)
+            if var is None:
+                return
+            try:
+                self._var_values[var] = float(value)
+            except (TypeError, ValueError):
+                self._var_values[var] = None
+            self._recompute()
+        else:
+            if pvname != self._pvname:
+                return
+            self._apply_evaluated(_evaluate_status(value, self.cfg))
+
+    def _recompute(self):
+        if any(v is None for v in self._var_values.values()):
             return
-        state, text = _evaluate_status(value, self.cfg)
+        pvs_dict = self._derived.get("pvs")
+        if pvs_dict:
+            expr = self._derived.get("expression", "")
+            try:
+                computed = eval(expr, {"__builtins__": {}}, dict(self._var_values))  # noqa: S307
+            except Exception:
+                self._apply_evaluated(("disconn", "ERR"))
+                return
+        else:
+            v1 = self._var_values.get("pv_1", 0.0) or 0.0
+            v2 = self._var_values.get("pv_2", 0.0) or 0.0
+            op = self._derived.get("operation", "subtract")
+            computed = (v1 - v2) if op == "subtract" else (v1 + v2) if op == "add" else v1
+
+        if self._state_map:
+            key = str(int(round(float(computed))))
+            entry = self._state_map.get(key)
+            if entry:
+                color = _resolve_state_map_color(entry.get("color", "disconn"))
+                self._apply_color(color, str(entry.get("label", key)))
+            else:
+                self._apply_evaluated(("disconn", key))
+        else:
+            self._apply_evaluated(_evaluate_status(computed, self.cfg))
+
+    def _apply_evaluated(self, state_text: tuple[str, str]):
+        state, text = state_text
         self.led.set_state(state)
-        color = _STATE_COLOR.get(state, DIM)
+        self._set_label(text, _STATE_COLOR.get(state, DIM))
+
+    def _apply_color(self, color: str, text: str):
+        led_state = (
+            "ok"        if color == OK   else
+            "major"     if color == MAJOR else
+            "minor"     if color == MINOR else
+            "attention" if color == ATTN  else
+            "blue"
+        )
+        self.led.set_state(led_state)
+        self._set_label(text, color)
+
+    def _set_label(self, text: str, color: str):
         self.val_lbl.setText(text)
         self.val_lbl.setStyleSheet(
             f"background: {VALBG}; border: 1px solid {BORDER}; "
-            f"font-size: 15px; font-weight: bold; color: {color}; padding: 1px 0;"
+            f"font-size: 17px; font-weight: bold; color: {color}; padding: 1px 0;"
         )
 
 
@@ -487,33 +664,35 @@ class FEShutterWidget(QWidget):
     """Large state indicator + Open / Close buttons for the FE shutter."""
 
     _STYLE_OPEN = (
-        "background: #1a6a1a; color: #90ff90; font-size: 18px; font-weight: bold; "
+        "background: #1a6a1a; color: #90ff90; font-size: 20px; font-weight: bold; "
         "border-radius: 4px; border: 1px solid #2aaa2a;"
     )
     _STYLE_CLOSED = (
-        "background: #6a1a1a; color: #ff9090; font-size: 18px; font-weight: bold; "
+        "background: #6a1a1a; color: #ff9090; font-size: 20px; font-weight: bold; "
         "border-radius: 4px; border: 1px solid #aa2a2a;"
     )
     _STYLE_UNKNOWN = (
-        "background: #555555; color: #aaaaaa; font-size: 18px; font-weight: bold; "
+        "background: #555555; color: #aaaaaa; font-size: 20px; font-weight: bold; "
         "border-radius: 4px; border: 1px solid #777777;"
     )
 
     def __init__(self, read_pv: str, open_pv: str, close_pv: str,
-                 bridge: PVBridge, parent=None):
+                 bridge: PVBridge, label: str = "FE Shutter",
+                 status_cfg: dict = None, parent=None):
         super().__init__(parent)
-        self._read_pv  = read_pv
-        self._open_pv  = open_pv
-        self._close_pv = close_pv
-        self.bridge    = bridge
+        self._read_pv   = read_pv
+        self._open_pv   = open_pv
+        self._close_pv  = close_pv
+        self._status_cfg = status_cfg or {}
+        self.bridge     = bridge
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
         # Label
-        lbl = QLabel("FE Shutter")
-        lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #aaaaaa;")
+        lbl = QLabel(label)
+        lbl.setStyleSheet("font-size: 17px; font-weight: bold; color: #aaaaaa;")
         lay.addWidget(lbl)
 
         # State indicator
@@ -529,7 +708,7 @@ class FEShutterWidget(QWidget):
         open_btn.setStyleSheet(
             "QPushButton { background: #1a4a1a; color: #88dd88; "
             "border: 1px solid #2a7a2a; border-radius: 4px; "
-            "font-weight: bold; font-size: 16px; }"
+            "font-weight: bold; font-size: 18px; }"
             "QPushButton:hover  { background: #2a6a2a; }"
             "QPushButton:pressed{ background: #1a8a1a; }"
         )
@@ -542,7 +721,7 @@ class FEShutterWidget(QWidget):
         close_btn.setStyleSheet(
             "QPushButton { background: #4a1a1a; color: #dd8888; "
             "border: 1px solid #7a2a2a; border-radius: 4px; "
-            "font-weight: bold; font-size: 16px; }"
+            "font-weight: bold; font-size: 18px; }"
             "QPushButton:hover  { background: #6a2a2a; }"
             "QPushButton:pressed{ background: #8a1a1a; }"
         )
@@ -557,15 +736,26 @@ class FEShutterWidget(QWidget):
         if pvname != self._read_pv or value is None:
             return
         text = str(value).upper().strip()
-        if text == "OPEN":
+        # First try direct string match (char_value from enum PV).
+        if text in ("OPEN",):
             self.state_lbl.setText("OPEN")
             self.state_lbl.setStyleSheet(self._STYLE_OPEN)
         elif text in ("CLOSED", "CLOSE"):
             self.state_lbl.setText("CLOSED")
             self.state_lbl.setStyleSheet(self._STYLE_CLOSED)
         else:
-            self.state_lbl.setText(text or "---")
-            self.state_lbl.setStyleSheet(self._STYLE_UNKNOWN)
+            # Fall back to threshold evaluation (handles numeric enum states
+            # like 0=Open, 1/2/3/4=Closed/Fault on SSH :state PVs).
+            state, label = _evaluate_status(value, self._status_cfg)
+            if state == "ok":
+                self.state_lbl.setText(label)
+                self.state_lbl.setStyleSheet(self._STYLE_OPEN)
+            elif state == "major":
+                self.state_lbl.setText(label)
+                self.state_lbl.setStyleSheet(self._STYLE_CLOSED)
+            else:
+                self.state_lbl.setText(text or "---")
+                self.state_lbl.setStyleSheet(self._STYLE_UNKNOWN)
 
     def _open(self):
         if self._open_pv:
@@ -592,50 +782,50 @@ class ControlRow(QWidget):
         self.setStyleSheet(f"background: transparent;")
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(2, 1, 2, 1)
-        lay.setSpacing(4)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(8)
 
         # Label
         lbl = QLabel(label)
-        lbl.setFixedWidth(128)
-        lbl.setStyleSheet("font-size: 15px;")
+        lbl.setFixedWidth(160)
+        lbl.setStyleSheet("font-size: 17px;")
         lay.addWidget(lbl)
 
         # Readback
-        self.readback = _value_label("--", 96)
+        self.readback = _value_label("--", 148)
         lay.addWidget(self.readback)
 
         # Setpoint / spacer
         if not self._readonly:
             self.sp_input = QLineEdit()
             self.sp_input.setPlaceholderText("setpoint")
-            self.sp_input.setFixedWidth(80)
-            self.sp_input.setFixedHeight(22)
+            self.sp_input.setFixedWidth(100)
+            self.sp_input.setFixedHeight(32)
             self.sp_input.returnPressed.connect(self._on_set)
             lay.addWidget(self.sp_input)
         else:
             self.sp_input = None
-            lay.addSpacing(84)
+            lay.addSpacing(108)
 
         # Units
         units_lbl = QLabel(cfg.get("units") or _DEFAULT_UNITS.get(label, ""))
-        units_lbl.setFixedWidth(52)
-        units_lbl.setStyleSheet(f"color: {DIM}; font-size: 14px;")
+        units_lbl.setFixedWidth(68)
+        units_lbl.setStyleSheet(f"color: {DIM}; font-size: 16px;")
         lay.addWidget(units_lbl)
 
         # Set button
         if not self._readonly:
-            set_btn = _btn("Set", width=36, color=BLUE, border="#2a80d9",
+            set_btn = _btn("Set", width=48, color=BLUE, border="#2a80d9",
                            text_color="#ffffff", bold=True)
             set_btn.clicked.connect(self._on_set)
             lay.addWidget(set_btn)
         else:
-            lay.addSpacing(40)
+            lay.addSpacing(56)
 
         # Stop button
         if self._stop_pv:
             stop_lbl = cfg.get("stop_button_label", "STOP")
-            stop_btn = _btn(stop_lbl, width=44, color="#8b0000",
+            stop_btn = _btn(stop_lbl, width=56, color="#8b0000",
                             border="#cc0000", text_color="#ffffff", bold=True)
             stop_btn.clicked.connect(self._on_stop)
             lay.addWidget(stop_btn)
@@ -651,10 +841,11 @@ class ControlRow(QWidget):
             return
         if value is None:
             self.readback.setText("--")
-        elif isinstance(value, float):
-            self.readback.setText(f"{value:.4g}")
         else:
-            self.readback.setText(str(value))
+            try:
+                self.readback.setText(f"{float(value):.4f}")
+            except (TypeError, ValueError):
+                self.readback.setText(str(value))
 
     def _on_set(self):
         if not self.sp_input or not self._write_pv:
@@ -673,6 +864,79 @@ class ControlRow(QWidget):
             self.bridge.put(self._stop_pv, self.cfg.get("stop_value", 1))
 
 
+# ── M2 Paddle In / Out row ────────────────────────────────────────────────────
+
+class M2PaddleRow(QWidget):
+    """
+    M2 Paddle row styled like ControlRow: readback + In (blue) + Out (red).
+    in_cfg  — dict with write_pv / command_value for the In action
+    out_cfg — dict with write_pv / command_value for the Out action
+    read_pv — PV to display the current position
+    """
+
+    def __init__(self, in_cfg: dict, out_cfg: dict, read_pv: str,
+                 bridge: PVBridge, parent=None):
+        super().__init__(parent)
+        self.bridge  = bridge
+        self._in_pv  = in_cfg.get("write_pv") or ""
+        self._in_val = in_cfg.get("command_value", 0)
+        self._out_pv = out_cfg.get("write_pv") or ""
+        self._out_val= out_cfg.get("command_value", 0)
+        self._read_pv= read_pv
+        self.setStyleSheet("background: transparent;")
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(8)
+
+        lbl = QLabel("M2 Paddle")
+        lbl.setFixedWidth(160)
+        lbl.setStyleSheet("font-size: 17px;")
+        lay.addWidget(lbl)
+
+        self.readback = _value_label("--", 148)
+        lay.addWidget(self.readback)
+
+        lay.addSpacing(108)  # where setpoint input sits in ControlRow
+
+        units_lbl = QLabel("mm")
+        units_lbl.setFixedWidth(68)
+        units_lbl.setStyleSheet(f"color: {DIM}; font-size: 16px;")
+        lay.addWidget(units_lbl)
+
+        in_btn = _btn("In", width=48, color=BLUE, border="#2a80d9",
+                      text_color="#ffffff", bold=True)
+        in_btn.clicked.connect(self._on_in)
+        lay.addWidget(in_btn)
+
+        out_btn = _btn("Out", width=56, color="#8b0000",
+                       border="#cc0000", text_color="#ffffff", bold=True)
+        out_btn.clicked.connect(self._on_out)
+        lay.addWidget(out_btn)
+
+        lay.addStretch()
+
+        if self._read_pv:
+            bridge.updated.connect(self._on_update)
+            bridge.subscribe(self._read_pv)
+
+    def _on_update(self, pvname: str, value):
+        if pvname != self._read_pv or value is None:
+            return
+        try:
+            self.readback.setText(f"{float(value):.4f}")
+        except (TypeError, ValueError):
+            self.readback.setText(str(value))
+
+    def _on_in(self):
+        if self._in_pv:
+            self.bridge.put(self._in_pv, self._in_val)
+
+    def _on_out(self):
+        if self._out_pv:
+            self.bridge.put(self._out_pv, self._out_val)
+
+
 # ── Command row ───────────────────────────────────────────────────────────────
 
 class CommandRow(QWidget):
@@ -686,24 +950,21 @@ class CommandRow(QWidget):
         self._cmd_val  = cfg.get("command_value", 1)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(2, 1, 2, 1)
-        lay.setSpacing(4)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(8)
 
         lbl = QLabel(label)
-        lbl.setFixedWidth(128)
+        lbl.setFixedWidth(160)
         lay.addWidget(lbl)
 
-        lay.addSpacing(100)
-
-        val_lbl = _value_label(str(self._cmd_val), 80)
-        lay.addWidget(val_lbl)
+        lay.addSpacing(156)
 
         units_space = QLabel("")
-        units_space.setFixedWidth(52)
+        units_space.setFixedWidth(68)
         lay.addWidget(units_space)
 
         btn_lbl = cfg.get("button_label", "Send")
-        btn = _btn(btn_lbl, width=50, color=BTN)
+        btn = _btn(btn_lbl, width=90, color=BTN)
         btn.clicked.connect(self._on_send)
         lay.addWidget(btn)
         lay.addStretch()
@@ -728,11 +989,18 @@ class IonChamberCard(QWidget):
         self._gain_dn_pv    = cfg.get("gain_down_pv") or ""
         self._unit_num_pv   = cfg.get("unit_num_pv") or ""
         self._unit_text_pv  = cfg.get("unit_text_pv") or ""
+        # Index→label maps for integer enum PVs (e.g. Keithley sens_num / sens_unit)
+        raw_num  = cfg.get("unit_num_labels") or {}
+        raw_text = cfg.get("unit_text_labels") or {}
+        self._unit_num_labels  = {int(k): str(v) for k, v in raw_num.items()}
+        self._unit_text_labels = {int(k): str(v) for k, v in raw_text.items()}
         derived = cfg.get("derived", {})
         self._delay_pv      = derived.get("delay_pv") or ""
         self._scale         = derived.get("scale", 1.0)
         self._derived_units = derived.get("units", "V")
-        self._mode          = "counts"   # "counts" | "ph/s"
+        ph_conv = cfg.get("photon_conversion", {})
+        self._ph_scale      = float(ph_conv.get("scale", 1.0))
+        self._ph_units      = ph_conv.get("units", "ph/s")
         self._counts        = None
         self._delay_ms      = None
         self._gain_num      = None
@@ -746,81 +1014,63 @@ class IonChamberCard(QWidget):
         )
 
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(8, 6, 8, 6)
-        outer.setSpacing(8)
+        outer.setContentsMargins(12, 10, 12, 10)
+        outer.setSpacing(12)
 
         # ── Left: name + readouts
         left = QVBoxLayout()
-        left.setSpacing(2)
+        left.setSpacing(8)
 
-        name_row = QHBoxLayout()
         name_lbl = QLabel(f"<b>{label}</b>")
-        name_lbl.setStyleSheet("font-size: 16px; background: transparent;")
-        name_row.addWidget(name_lbl)
-        name_row.addStretch()
-        self.unit_lbl = QLabel(self._derived_units)
-        self.unit_lbl.setStyleSheet(f"color: {DIM}; font-size: 14px; background: transparent;")
-        name_row.addWidget(self.unit_lbl)
-        left.addLayout(name_row)
+        name_lbl.setStyleSheet("font-size: 18px; background: transparent;")
+        left.addWidget(name_lbl)
 
-        cts_row = QHBoxLayout()
-        cts_hdr = QLabel("Counts")
-        cts_hdr.setStyleSheet(f"color: {DIM}; font-size: 13px; background: transparent;")
-        cts_row.addWidget(cts_hdr)
-        cts_row.addStretch()
-        self.counts_val = QLabel("--")
-        self.counts_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.counts_val.setStyleSheet(
-            f"background: {VALBG}; color: #cc4444; "
-            f"font-family: 'Liberation Mono', monospace; font-size: 19px; font-weight: bold; "
-            f"border: 1px solid {BORDER}; padding: 1px 6px; min-width: 110px;"
+        _val_ss = (
+            f"font-family: 'Liberation Mono', monospace; font-size: 18px; "
+            f"border: 1px solid {BORDER}; padding: 1px 6px; min-width: 120px;"
         )
-        cts_row.addWidget(self.counts_val)
-        left.addLayout(cts_row)
 
-        drv_row = QHBoxLayout()
-        self.drv_hdr = QLabel("Voltage")
-        self.drv_hdr.setStyleSheet(f"color: {DIM}; font-size: 13px; background: transparent;")
-        drv_row.addWidget(self.drv_hdr)
-        drv_row.addStretch()
-        self.derived_val = QLabel("--")
-        self.derived_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.derived_val.setStyleSheet(
-            f"background: {VALBG}; color: #7a7aaa; "
-            f"font-family: 'Liberation Mono', monospace; font-size: 16px; "
-            f"border: 1px solid {BORDER}; padding: 1px 6px; min-width: 110px;"
-        )
-        drv_row.addWidget(self.derived_val)
-        left.addLayout(drv_row)
+        volt_row = QHBoxLayout()
+        volt_hdr = QLabel(f"Voltage ({self._derived_units})")
+        volt_hdr.setStyleSheet(f"color: {DIM}; font-size: 15px; background: transparent;")
+        volt_row.addWidget(volt_hdr)
+        volt_row.addStretch()
+        self.volt_val = QLabel("--")
+        self.volt_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.volt_val.setStyleSheet(f"background: {VALBG}; color: #7a7aaa; " + _val_ss)
+        volt_row.addWidget(self.volt_val)
+        left.addLayout(volt_row)
+
+        ph_row = QHBoxLayout()
+        ph_hdr = QLabel(f"Photons/s ({self._ph_units})")
+        ph_hdr.setStyleSheet(f"color: {DIM}; font-size: 15px; background: transparent;")
+        ph_row.addWidget(ph_hdr)
+        ph_row.addStretch()
+        self.ph_val = QLabel("--")
+        self.ph_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.ph_val.setStyleSheet(f"background: {VALBG}; color: #7aaa7a; " + _val_ss)
+        ph_row.addWidget(self.ph_val)
+        left.addLayout(ph_row)
+
         outer.addLayout(left, 1)
 
-        # ── Right: mode toggle + gain buttons
+        # ── Right: gain buttons
         right = QVBoxLayout()
-        right.setSpacing(4)
+        right.setSpacing(6)
         right.addStretch()
 
-        self.mode_btn = QPushButton("cts")
-        self.mode_btn.setFixedSize(44, 22)
-        self.mode_btn.setStyleSheet(
-            f"QPushButton {{ background: #2a4a2a; color: #90ee90; "
-            f"border: 1px solid #3a6a3a; border-radius: 3px; font-size: 14px; }}"
-            f"QPushButton:hover {{ background: #3a6a3a; }}"
-        )
-        self.mode_btn.clicked.connect(self._toggle_mode)
-        right.addWidget(self.mode_btn, 0, Qt.AlignCenter)
-
         gain_row = QHBoxLayout()
-        gain_row.setSpacing(4)
+        gain_row.setSpacing(6)
 
         _btn_ss = (
             f"QPushButton {{ background: {PANEL}; color: {TEXT}; "
             f"border: 1px solid {BORDER}; border-radius: 3px; "
-            f"font-size: 18px; font-weight: bold; padding: 0 4px; }}"
+            f"font-size: 20px; font-weight: bold; padding: 0 4px; }}"
             f"QPushButton:hover {{ background: {BTNHOV}; }}"
         )
 
         minus_btn = QPushButton("−")
-        minus_btn.setFixedSize(28, 26)
+        minus_btn.setFixedSize(32, 32)
         minus_btn.setStyleSheet(_btn_ss)
         minus_btn.clicked.connect(lambda: self.bridge.put(self._gain_dn_pv, 1) if self._gain_dn_pv else None)
         gain_row.addWidget(minus_btn)
@@ -828,14 +1078,14 @@ class IonChamberCard(QWidget):
         self.gain_val = QLabel("--")
         self.gain_val.setAlignment(Qt.AlignCenter)
         self.gain_val.setStyleSheet(
-            f"color: {TEXT}; font-size: 13px; font-weight: bold; "
+            f"color: {TEXT}; font-size: 15px; font-weight: bold; "
             f"background: {VALBG}; border: 1px solid {BORDER}; "
-            f"border-radius: 3px; padding: 1px 5px; min-width: 72px;"
+            f"border-radius: 3px; padding: 2px 6px; min-width: 80px;"
         )
         gain_row.addWidget(self.gain_val)
 
         plus_btn = QPushButton("+")
-        plus_btn.setFixedSize(28, 26)
+        plus_btn.setFixedSize(32, 32)
         plus_btn.setStyleSheet(_btn_ss)
         plus_btn.clicked.connect(lambda: self.bridge.put(self._gain_up_pv, 1) if self._gain_up_pv else None)
         gain_row.addWidget(plus_btn)
@@ -860,71 +1110,58 @@ class IonChamberCard(QWidget):
     def _on_counts(self, pvname: str, value):
         if pvname != self._read_pv:
             return
-        self._counts = value
-        if value is not None:
-            try:
-                self.history_times.append(time.time())
-                self.history_values.append(float(value))
-            except (TypeError, ValueError):
-                pass
+        try:
+            self._counts = float(value)
+            self.history_times.append(time.time())
+            self.history_values.append(self._counts)
+        except (TypeError, ValueError):
+            self._counts = None
         self._refresh()
 
     def _on_delay(self, pvname: str, value):
         if pvname != self._delay_pv:
             return
-        self._delay_ms = value
+        try:
+            self._delay_ms = float(value)
+        except (TypeError, ValueError):
+            self._delay_ms = None
         self._refresh()
 
     def _on_gain_pv(self, pvname: str, value):
         if pvname == self._unit_num_pv:
-            self._gain_num = value
+            try:
+                idx = int(float(value))
+                self._gain_num = self._unit_num_labels.get(idx, str(idx))
+            except (TypeError, ValueError):
+                self._gain_num = None
         elif pvname == self._unit_text_pv:
-            self._gain_text = str(value).strip() if value is not None else None
+            try:
+                idx = int(float(value))
+                self._gain_text = self._unit_text_labels.get(idx, str(idx))
+            except (TypeError, ValueError):
+                self._gain_text = str(value).strip() if value is not None else None
         else:
             return
         self._refresh_gain()
 
     def _refresh_gain(self):
-        parts = []
-        if self._gain_num is not None:
-            try:
-                parts.append(str(int(float(self._gain_num))))
-            except (TypeError, ValueError):
-                parts.append(str(self._gain_num))
-        if self._gain_text:
-            parts.append(self._gain_text)
+        parts = [p for p in (self._gain_num, self._gain_text) if p]
         self.gain_val.setText(" ".join(parts) if parts else "--")
 
     def _refresh(self):
         c = self._counts
-        if c is None:
-            self.counts_val.setText("--")
-            self.derived_val.setText("--")
+        t = self._delay_ms
+        if c is None or not t or t <= 0:
+            self.volt_val.setText("--")
+            self.ph_val.setText("--")
             return
 
-        if self._mode == "counts":
-            self.counts_val.setText(f"{int(c):,}" if isinstance(c, (int, float)) else str(c))
-        else:
-            if self._delay_ms and float(self._delay_ms) > 0:
-                rate = self._scale * float(c) / (float(self._delay_ms) / 1000.0)
-                self.counts_val.setText(f"{rate:.3g}")
-            else:
-                self.counts_val.setText("--")
+        t_s = t / 1000.0
+        voltage = self._scale * c / t_s
+        self.volt_val.setText(f"{voltage:.3e}")
 
-        if self._delay_ms and float(self._delay_ms) > 0 and isinstance(c, (int, float)):
-            v = self._scale * c / (float(self._delay_ms) / 1000.0)
-            self.derived_val.setText(f"{v:.3e}")
-        else:
-            self.derived_val.setText("--")
-
-    def _toggle_mode(self):
-        if self._mode == "counts":
-            self._mode = "ph/s"
-            self.mode_btn.setText("ph/s")
-        else:
-            self._mode = "counts"
-            self.mode_btn.setText("cts")
-        self._refresh()
+        ph_rate = self._ph_scale * c / t_s
+        self.ph_val.setText(f"{ph_rate:.3e}")
 
 
 # ── Cryostat bar ──────────────────────────────────────────────────────────────
@@ -946,24 +1183,24 @@ class CryoBar(QWidget):
         self._units  = cfg.get("units", "")
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 1, 0, 1)
-        lay.setSpacing(6)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(8)
 
         lbl = QLabel(label)
-        lbl.setFixedWidth(104)
+        lbl.setFixedWidth(120)
         lay.addWidget(lbl)
 
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
         self.bar.setValue(0)
         self.bar.setTextVisible(False)
-        self.bar.setFixedHeight(14)
+        self.bar.setFixedHeight(20)
         lay.addWidget(self.bar, 1)
 
         self.val_lbl = QLabel(f"-- {self._units}")
-        self.val_lbl.setFixedWidth(96)
+        self.val_lbl.setFixedWidth(140)
         self.val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.val_lbl.setStyleSheet(f"font-family: monospace; font-size: 15px;")
+        self.val_lbl.setStyleSheet(f"font-family: monospace; font-size: 17px;")
         lay.addWidget(self.val_lbl)
 
         if self._pvname:
@@ -1018,33 +1255,33 @@ class CryostatPanel(QGroupBox):
         self._trend_ax_p    = None
 
         lay = QVBoxLayout(self)
-        lay.setSpacing(4)
+        lay.setSpacing(8)
 
         # ── Temperature row ──
         tsp = cfg.get("temperature_setpoint", {})
         trd = cfg.get("temperature_readback", {})
 
         t_row = QHBoxLayout()
-        t_row.setSpacing(4)
+        t_row.setSpacing(8)
         t_row.addWidget(QLabel("Temp SP"))
 
         self.t_input = QLineEdit()
         self.t_input.setPlaceholderText("K")
-        self.t_input.setFixedWidth(58)
-        self.t_input.setFixedHeight(22)
+        self.t_input.setFixedWidth(80)
+        self.t_input.setFixedHeight(32)
         self.t_input.returnPressed.connect(self._set_temp)
         t_row.addWidget(self.t_input)
 
-        t_set = _btn("Set", 36, BLUE, "#2a80d9", "#fff", bold=True)
+        t_set = _btn("Set", 48, BLUE, "#2a80d9", "#fff", bold=True)
         t_set.clicked.connect(self._set_temp)
         t_row.addWidget(t_set)
 
         for val in tsp.get("presets", [80, 120, 300]):
             pb = QPushButton(str(val))
-            pb.setFixedSize(38, 22)
+            pb.setFixedSize(48, 32)
             pb.setStyleSheet(
                 f"QPushButton {{ background: #3a3a5a; color: #aaaad0; "
-                f"border: 1px solid #4a4a7a; border-radius: 3px; font-size: 14px; }}"
+                f"border: 1px solid #4a4a7a; border-radius: 3px; font-size: 16px; }}"
                 f"QPushButton:hover {{ background: #4a4a7a; }}"
             )
             pb.clicked.connect(lambda _, v=val: self.bridge.put(self._tsp_write, float(v)))
@@ -1053,15 +1290,15 @@ class CryostatPanel(QGroupBox):
         t_row.addStretch()
 
         self.tset_lbl = QLabel("Tset: --")
-        self.tset_lbl.setStyleSheet(f"font-family: monospace; font-size: 15px;")
+        self.tset_lbl.setStyleSheet(f"font-family: monospace; font-size: 17px;")
         t_row.addWidget(self.tset_lbl)
 
         self.tread_lbl = QLabel("Tread: --")
-        self.tread_lbl.setStyleSheet(f"font-family: monospace; font-size: 15px;")
+        self.tread_lbl.setStyleSheet(f"font-family: monospace; font-size: 17px;")
         t_row.addWidget(self.tread_lbl)
 
         self.ah_btn = QPushButton("AutoHeat  OFF")
-        self.ah_btn.setFixedHeight(22)
+        self.ah_btn.setFixedHeight(32)
         self.ah_btn.setStyleSheet(
             "QPushButton { background: #5a1a1a; color: #ee9090; "
             "border: 1px solid #7a2a2a; border-radius: 3px; font-weight: bold; }"
@@ -1089,15 +1326,15 @@ class CryostatPanel(QGroupBox):
         gf = cfg.get("gas_flow", {})
         if gf.get("write_pv"):
             gf_row = QHBoxLayout()
-            gf_row.setSpacing(4)
+            gf_row.setSpacing(8)
             gf_row.addWidget(QLabel("Gas Flow SP"))
             self.gf_input = QLineEdit()
             self.gf_input.setPlaceholderText("%")
-            self.gf_input.setFixedWidth(58)
-            self.gf_input.setFixedHeight(22)
+            self.gf_input.setFixedWidth(80)
+            self.gf_input.setFixedHeight(32)
             self.gf_input.returnPressed.connect(self._set_gas)
             gf_row.addWidget(self.gf_input)
-            gf_set = _btn("Set", 36, BLUE, "#2a80d9", "#fff", bold=True)
+            gf_set = _btn("Set", 48, BLUE, "#2a80d9", "#fff", bold=True)
             gf_set.clicked.connect(self._set_gas)
             gf_row.addWidget(gf_set)
             gf_row.addStretch()
@@ -1270,58 +1507,58 @@ class FurnacePanel(QWidget):
         self._stop_pv  = cfg.get("stop_pv", "")
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(6, 6, 6, 6)
-        lay.setSpacing(4)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(8)
 
         # ── Temperature setpoint row ──
         tsp_row = QHBoxLayout()
-        tsp_row.setSpacing(4)
+        tsp_row.setSpacing(8)
         tsp_row.addWidget(QLabel("Temp SP"))
         self.t_input = QLineEdit()
         self.t_input.setPlaceholderText("°C")
-        self.t_input.setFixedWidth(58)
-        self.t_input.setFixedHeight(22)
+        self.t_input.setFixedWidth(80)
+        self.t_input.setFixedHeight(32)
         self.t_input.returnPressed.connect(self._set_temp)
         tsp_row.addWidget(self.t_input)
-        t_set = _btn("Set", 36, BLUE, "#2a80d9", "#fff", bold=True)
+        t_set = _btn("Set", 48, BLUE, "#2a80d9", "#fff", bold=True)
         t_set.clicked.connect(self._set_temp)
         tsp_row.addWidget(t_set)
         for val in tsp_cfg.get("presets", [100, 200, 400, 600, 800]):
             pb = QPushButton(str(val))
-            pb.setFixedSize(38, 22)
+            pb.setFixedSize(48, 32)
             pb.setStyleSheet(
                 "QPushButton { background: #5a3a1a; color: #e0b080; "
-                "border: 1px solid #7a5a2a; border-radius: 3px; font-size: 14px; }"
+                "border: 1px solid #7a5a2a; border-radius: 3px; font-size: 16px; }"
                 "QPushButton:hover { background: #7a5a2a; }"
             )
             pb.clicked.connect(lambda _, v=val: self.bridge.put(self._tsp_write, float(v)))
             tsp_row.addWidget(pb)
         tsp_row.addStretch()
         self.tset_lbl = QLabel("SP: --")
-        self.tset_lbl.setStyleSheet("font-family: monospace; font-size: 15px;")
+        self.tset_lbl.setStyleSheet("font-family: monospace; font-size: 17px;")
         tsp_row.addWidget(self.tset_lbl)
         self.tread_lbl = QLabel("T: --")
-        self.tread_lbl.setStyleSheet("font-family: monospace; font-size: 15px;")
+        self.tread_lbl.setStyleSheet("font-family: monospace; font-size: 17px;")
         tsp_row.addWidget(self.tread_lbl)
         lay.addLayout(tsp_row)
         lay.addWidget(_sep())
 
         # ── Heat rate row ──
         hr_row = QHBoxLayout()
-        hr_row.setSpacing(4)
+        hr_row.setSpacing(8)
         hr_row.addWidget(QLabel("Heat Rate"))
         self.hr_input = QLineEdit()
         self.hr_input.setPlaceholderText("°C/min")
-        self.hr_input.setFixedWidth(58)
-        self.hr_input.setFixedHeight(22)
+        self.hr_input.setFixedWidth(80)
+        self.hr_input.setFixedHeight(32)
         self.hr_input.returnPressed.connect(self._set_hr)
         hr_row.addWidget(self.hr_input)
-        hr_set = _btn("Set", 36, BLUE, "#2a80d9", "#fff", bold=True)
+        hr_set = _btn("Set", 48, BLUE, "#2a80d9", "#fff", bold=True)
         hr_set.clicked.connect(self._set_hr)
         hr_row.addWidget(hr_set)
         hr_row.addStretch()
         self.hr_lbl = QLabel("Rate: --")
-        self.hr_lbl.setStyleSheet("font-family: monospace; font-size: 15px;")
+        self.hr_lbl.setStyleSheet("font-family: monospace; font-size: 17px;")
         hr_row.addWidget(self.hr_lbl)
         lay.addLayout(hr_row)
         lay.addWidget(_sep())
@@ -1333,7 +1570,6 @@ class FurnacePanel(QWidget):
         # ── Stop button ──
         stop_btn = _btn("STOP Furnace", color="#7a1a1a", border="#aa2a2a",
                         text_color="#ffaaaa", bold=True)
-        stop_btn.setFixedHeight(26)
         stop_btn.clicked.connect(self._stop)
         lay.addWidget(stop_btn)
         lay.addStretch()
@@ -1382,6 +1618,14 @@ class FurnacePanel(QWidget):
 # ── Main window ───────────────────────────────────────────────────────────────
 
 class BeamlineControlWindow(QMainWindow):
+    # Subclasses can override this to change which shutter appears in the header.
+    _HEADER_SHUTTER = {
+        "status_key": "FE Shutter",
+        "open_key":   "Open FE Shutter",
+        "close_key":  "Close FE Shutter",
+        "label":      "FE Shutter",
+    }
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Beamline Control — CLS 1607-7-I21")
@@ -1397,25 +1641,25 @@ class BeamlineControlWindow(QMainWindow):
         central.setObjectName("root")
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(8, 6, 8, 6)
-        root.setSpacing(5)
+        root.setContentsMargins(12, 10, 12, 10)
+        root.setSpacing(10)
 
         # ── Header bar ──
         hdr = QHBoxLayout()
-        hdr.setSpacing(10)
+        hdr.setSpacing(14)
         title = QLabel("<b>Beamline 1607-7-I21  Control</b>")
-        title.setStyleSheet("font-size: 20px; color: #e0e0e0; background: transparent;")
+        title.setStyleSheet("font-size: 22px; color: #e0e0e0; background: transparent;")
         hdr.addWidget(title)
         hdr.addStretch()
         mode_lbl = QLabel("●  DUMMY MODE — no EPICS connection")
-        mode_lbl.setStyleSheet(f"color: {MINOR}; font-size: 15px; font-weight: bold; background: transparent;")
+        mode_lbl.setStyleSheet(f"color: {MINOR}; font-size: 17px; font-weight: bold; background: transparent;")
         hdr.addWidget(mode_lbl)
 
         # Ring current readback
         _rc_pv = (config.get("status") or {}).get("Ring Status", {}).get("read_pv", "PCT1402-01:mA:fbk")
         rc_lbl = QLabel("Ring: -- mA")
         rc_lbl.setStyleSheet(
-            f"font-family: monospace; font-size: 17px; font-weight: bold; "
+            f"font-family: monospace; font-size: 19px; font-weight: bold; "
             f"color: {OK}; background: transparent;"
         )
         def _on_rc(pvname, value, _lbl=rc_lbl):
@@ -1430,17 +1674,21 @@ class BeamlineControlWindow(QMainWindow):
 
         _st  = config.get("status")   or {}
         _cmd = config.get("commands") or {}
-        _fe_read  = _st.get("FE Shutter",       {}).get("read_pv",  "IPSH1407-I00-02:state")
-        _fe_open  = _cmd.get("Open FE Shutter",  {}).get("write_pv", "PV:FE:SHUTTER:OPEN")
-        _fe_close = _cmd.get("Close FE Shutter", {}).get("write_pv", "PV:FE:SHUTTER:CLOSE")
-        hdr.addWidget(FEShutterWidget(_fe_read, _fe_open, _fe_close, self.bridge))
+        _sh  = self._HEADER_SHUTTER
+        _sh_status_cfg = _st.get(_sh["status_key"], {})
+        _sh_read  = _sh_status_cfg.get("read_pv",  "")
+        _sh_open  = _cmd.get(_sh["open_key"],  {}).get("write_pv", "")
+        _sh_close = _cmd.get(_sh["close_key"], {}).get("write_pv", "")
+        hdr.addWidget(FEShutterWidget(_sh_read, _sh_open, _sh_close,
+                                      self.bridge, label=_sh["label"],
+                                      status_cfg=_sh_status_cfg))
         root.addLayout(hdr)
 
         # ── Status chips (inline, no scroll wrapper) ──
         status_cfg = config.get("status") or {}
         chips_row = QHBoxLayout()
-        chips_row.setContentsMargins(0, 2, 0, 2)
-        chips_row.setSpacing(5)
+        chips_row.setContentsMargins(0, 6, 0, 6)
+        chips_row.setSpacing(10)
         for lbl, scfg in status_cfg.items():
             chips_row.addWidget(StatusChip(lbl, scfg, self.bridge))
         chips_row.addStretch()
@@ -1457,19 +1705,19 @@ class BeamlineControlWindow(QMainWindow):
         content.setStyleSheet(f"background: {BG};")
         content_lay = QHBoxLayout(content)
         content_lay.setContentsMargins(0, 0, 0, 0)
-        content_lay.setSpacing(8)
+        content_lay.setSpacing(14)
 
         # ── Left column: controls ──
         left = QWidget()
         left.setStyleSheet(f"background: {BG};")
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 0, 0)
-        left_lay.setSpacing(6)
+        left_lay.setSpacing(12)
 
         # ── Dashboard cards ──
         _ctrl = config.get("controls") or {}
         dash_row = QHBoxLayout()
-        dash_row.setSpacing(6)
+        dash_row.setSpacing(10)
         _dash_params = [
             ("Mono Energy", ".1f", "eV"),
             ("M1 Pitch",    ".4f", "mrad"),
@@ -1485,15 +1733,15 @@ class BeamlineControlWindow(QMainWindow):
 
         ctrl_group = QGroupBox("Beamline Controls")
         cg = QVBoxLayout(ctrl_group)
-        cg.setSpacing(0)
+        cg.setSpacing(4)
 
         # Column headers
         hdr_row = QHBoxLayout()
-        hdr_row.setContentsMargins(2, 0, 2, 4)
-        hdr_row.setSpacing(4)
-        for txt, w in [("Parameter", 128), ("Readback", 96), ("Setpoint", 80), ("Units", 52), ("", 40)]:
+        hdr_row.setContentsMargins(6, 4, 6, 8)
+        hdr_row.setSpacing(8)
+        for txt, w in [("Parameter", 160), ("Readback", 148), ("Setpoint", 100), ("Units", 68), ("", 56)]:
             h = QLabel(txt)
-            h.setStyleSheet(f"color: {DIM}; font-size: 14px; font-weight: bold; background: transparent;")
+            h.setStyleSheet(f"color: {DIM}; font-size: 16px; font-weight: bold; background: transparent;")
             h.setFixedWidth(w)
             hdr_row.addWidget(h)
         hdr_row.addStretch()
@@ -1506,7 +1754,7 @@ class BeamlineControlWindow(QMainWindow):
             cg.addWidget(_sep())
             sh = QLabel(title)
             sh.setStyleSheet(
-                f"color: {DIM}; font-size: 14px; font-weight: bold; "
+                f"color: {DIM}; font-size: 16px; font-weight: bold; "
                 f"background: transparent; padding: 3px 4px 1px 4px;"
             )
             cg.addWidget(sh)
@@ -1524,7 +1772,7 @@ class BeamlineControlWindow(QMainWindow):
             _add_row(lbl)
 
         _section("Stage")
-        for lbl in ("Stage Z", "Stage Y"):
+        for lbl in ("Stage Z", "Stage Y", "Sample Wheel"):
             _add_row(lbl)
 
         _section("JJ Slits")
@@ -1535,16 +1783,84 @@ class BeamlineControlWindow(QMainWindow):
         for lbl in ("DBHR M1", "DBHR M2", "DBHR Pitch"):
             _add_row(lbl)
 
+        # DBHR In / Out preset buttons
+        dbhr_pvs = {
+            lbl: (controls_cfg.get(lbl) or {}).get("write_pv") or ""
+            for lbl in ("DBHR M1", "DBHR M2", "DBHR Pitch")
+        }
+        dbhr_in_vals  = config.get("dbhr_in")  or {}
+        dbhr_out_vals = config.get("dbhr_out") or {}
+        if any(dbhr_pvs.values()) and (dbhr_in_vals or dbhr_out_vals):
+            dbhr_btn_row = QHBoxLayout()
+            dbhr_btn_row.setContentsMargins(6, 6, 6, 6)
+            dbhr_btn_row.addSpacing(132)
+
+            def _make_dbhr_handler(vals):
+                def _handler(_checked=False, _pvs=dbhr_pvs, _v=vals, _br=self.bridge):
+                    for lbl, pv in _pvs.items():
+                        if pv and lbl in _v:
+                            try:
+                                _br.put(pv, float(_v[lbl]))
+                            except (TypeError, ValueError):
+                                pass
+                return _handler
+
+            if dbhr_in_vals:
+                in_btn = _btn("In", width=50, color="#1a4a1a",
+                              border="#2a7a2a", text_color="#88dd88", bold=True)
+                in_btn.clicked.connect(_make_dbhr_handler(dbhr_in_vals))
+                dbhr_btn_row.addWidget(in_btn)
+                dbhr_btn_row.addSpacing(6)
+
+            if dbhr_out_vals:
+                out_btn = _btn("Out", width=50, color="#4a1a1a",
+                               border="#7a2a2a", text_color="#dd8888", bold=True)
+                out_btn.clicked.connect(_make_dbhr_handler(dbhr_out_vals))
+                dbhr_btn_row.addWidget(out_btn)
+
+            dbhr_btn_row.addStretch()
+            cg.addLayout(dbhr_btn_row)
+
         # Any remaining controls not in a named group
         known = {"Mono Energy", "Dwell Time", "M1 Pitch",
-                 "Stage Z", "Stage Y",
+                 "Stage Z", "Stage Y", "Sample Wheel",
                  "JJ Vert Gap", "JJ Vert Center", "JJ Hor Gap", "JJ Hor Center",
                  "DBHR M1", "DBHR M2", "DBHR Pitch"}
         extra = [l for l in controls_cfg if l not in known]
         if extra:
-            _section("Other")
+            _section("Detector Stage")
             for lbl in extra:
                 _add_row(lbl)
+
+        # Commands panel section (excludes header-shutter commands)
+        commands_cfg = config.get("commands") or {}
+        _sh = self._HEADER_SHUTTER
+        _hdr_cmds = {_sh.get("open_key", ""), _sh.get("close_key", "")}
+        # "Move M2 Paddle In" is handled by M2PaddleRow below
+        _M2_IN_KEY = "Move M2 Paddle In"
+        panel_cmds = {k: v for k, v in commands_cfg.items()
+                      if k not in _hdr_cmds and k != _M2_IN_KEY}
+
+        # Build M2 Paddle In/Out row if we have enough PV config
+        _m2_status = (config.get("status") or {}).get("M2 Paddle", {})
+        _m2_in_cfg = commands_cfg.get(_M2_IN_KEY, {})
+        _m2_out_pv = _m2_status.get("move_out_pv") or _m2_status.get("read_pv") or ""
+        _m2_out_val = float(_m2_status.get("move_out_value", 0.0))
+        _m2_read_pv = _m2_status.get("read_pv") or ""
+
+        if panel_cmds or _m2_in_cfg or _m2_out_pv:
+            _section("Commands")
+            if _m2_in_cfg or _m2_out_pv:
+                m2_row = M2PaddleRow(
+                    in_cfg=_m2_in_cfg,
+                    out_cfg={"write_pv": _m2_out_pv, "command_value": _m2_out_val},
+                    read_pv=_m2_read_pv,
+                    bridge=self.bridge,
+                )
+                cg.addWidget(m2_row)
+            for lbl, ccfg in panel_cmds.items():
+                row = CommandRow(lbl, ccfg, self.bridge)
+                cg.addWidget(row)
 
         left_lay.addWidget(ctrl_group)
         left_lay.addStretch()
@@ -1555,13 +1871,13 @@ class BeamlineControlWindow(QMainWindow):
         right.setStyleSheet(f"background: {BG};")
         right_lay = QVBoxLayout(right)
         right_lay.setContentsMargins(0, 0, 0, 0)
-        right_lay.setSpacing(6)
+        right_lay.setSpacing(12)
 
         ic_cfg = config.get("ion_chambers", {})
         if ic_cfg:
             ic_group = QGroupBox("Ion Chambers")
             ic_lay = QVBoxLayout(ic_group)
-            ic_lay.setSpacing(5)
+            ic_lay.setSpacing(10)
             for ic_lbl, iccfg in ic_cfg.items():
                 card = IonChamberCard(ic_lbl, iccfg, self.bridge)
                 self._ic_cards.append(card)
@@ -1586,7 +1902,7 @@ class BeamlineControlWindow(QMainWindow):
                     border: 1px solid {BORDER};
                     border-bottom: none;
                     padding: 4px 12px;
-                    font-size: 15px;
+                    font-size: 17px;
                 }}
                 QTabBar::tab:selected {{
                     background: {PANEL};
@@ -1611,15 +1927,13 @@ class BeamlineControlWindow(QMainWindow):
         root.addWidget(_sep())
         footer = QHBoxLayout()
         refresh_btn = _btn("Refresh All", 100)
-        refresh_btn.setFixedHeight(26)
         footer.addWidget(refresh_btn)
         clear_btn = _btn("Clear Setpoints", 110)
-        clear_btn.setFixedHeight(26)
         clear_btn.clicked.connect(self._clear_setpoints)
         footer.addWidget(clear_btn)
         footer.addStretch()
         info = QLabel(f"pvs.yaml: {PV_CONFIG_FILE.name}  |  pyepics {getattr(epics, '__version__', 'n/a')}")
-        info.setStyleSheet(f"color: {DIM}; font-size: 14px; background: transparent;")
+        info.setStyleSheet(f"color: {DIM}; font-size: 16px; background: transparent;")
         footer.addWidget(info)
         root.addLayout(footer)
 
@@ -1675,18 +1989,30 @@ class BeamlineControlWindow(QMainWindow):
         lay.addWidget(canvas)
 
         def _refresh():
-            for ax, card in zip(axes_list, self._ic_cards):
+            last_idx = len(axes_list) - 1
+            for i, (ax, card) in enumerate(zip(axes_list, self._ic_cards)):
                 ax.clear()
-                ax.set_title(card.label, color="#e0e0e0")
-                ax.set_ylabel("Signal", color="#888888")
-                ax.tick_params(colors="#888888")
+                ax.set_facecolor("#1e1e1e")
+                ax.set_title(card.label, color="#e0e0e0", fontsize=10)
+                ax.set_ylabel("Counts", color="#888888", fontsize=9)
+                ax.tick_params(colors="#888888", labelsize=8)
                 ax.grid(True, alpha=0.2, color="#555555")
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("#555555")
+                if i < last_idx:
+                    ax.tick_params(labelbottom=False)
                 if card.history_times:
                     latest = card.history_times[-1]
                     rel = [t - latest for t in card.history_times]
-                    ax.plot(rel, list(card.history_values), color="#4488cc")
+                    vals = list(card.history_values)
+                    marker = "o" if len(vals) == 1 else ("." if len(vals) < 5 else None)
+                    ax.plot(rel, vals, color="#4488cc",
+                            linewidth=1.2, marker=marker, markersize=4)
+                else:
+                    ax.text(0.5, 0.5, "No data yet", transform=ax.transAxes,
+                            color="#666666", ha="center", va="center", fontsize=9)
             if axes_list:
-                axes_list[-1].set_xlabel("Time relative to latest sample (s)", color="#888888")
+                axes_list[-1].set_xlabel("Time (s, relative to latest)", color="#888888", fontsize=9)
             canvas.draw()
 
         timer = QTimer(win)
@@ -1754,4 +2080,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
