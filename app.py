@@ -2595,9 +2595,12 @@ def build_app_classes():
             self.icon_file = str(Path(icondir, "ptable.ico"))
 
             self.createMainPanel()
-            # Skip EPICS connection for mock prefixes (for debugging)
+            # Defer EPICS connection so the frame shows immediately.
+            # onConnectEpics can block for several seconds on CA timeouts when
+            # a detector is powered off; calling it synchronously here would
+            # prevent GeOnlyFrame from ever appearing.
             if not self.prefix.upper().startswith("MOCK"):
-                self.onConnectEpics(event=None, prefix=self.prefix)
+                wx.CallAfter(self._deferred_epics_connect)
             self.SetTitle(f"{self.main_title}: {title}")
 
         def createMenus(self):
@@ -2932,7 +2935,10 @@ def build_app_classes():
         if getattr(self, "_sum_mode", False):
             _do_live_sum(self)
             return
-        return EpicsXRFDisplayFrame.show_mca(self, *args, **kwargs)
+        try:
+            return EpicsXRFDisplayFrame.show_mca(self, *args, **kwargs)
+        except Exception as exc:
+            print(f"[xrf] show_mca error: {exc}", flush=True)
 
     DetectorPanel.show_mca = _safe_show_mca
 
@@ -2948,15 +2954,22 @@ def build_app_classes():
     def _safe_onSelectDet(self, event=None, index=0, init=False, **kws):
         """Exit sum mode when the user selects a single channel."""
         self._sum_mode = False
-        EpicsXRFDisplayFrame.onSelectDet(self, event=event, index=index, init=init, **kws)
+        if getattr(self, "det", None) is None:
+            return
+        try:
+            EpicsXRFDisplayFrame.onSelectDet(self, event=event, index=index, init=init, **kws)
+        except Exception as exc:
+            print(f"[xrf] onSelectDet error: {exc}", flush=True)
 
     DetectorPanel.onSelectDet = _safe_onSelectDet
 
     def _safe_update_data(self, *args, **kwargs):
-        # Avoid crashes when EPICS connection is not established (e.g. MOCK prefixes)
         if getattr(self, "det", None) is None:
             return
-        return EpicsXRFDisplayFrame.UpdateData(self, *args, **kwargs)
+        try:
+            return EpicsXRFDisplayFrame.UpdateData(self, *args, **kwargs)
+        except Exception as exc:
+            print(f"[xrf] UpdateData error: {exc}", flush=True)
 
     DetectorPanel.UpdateData = _safe_update_data
 
@@ -2971,6 +2984,43 @@ def build_app_classes():
 
     DetectorPanel.onClose = _panel_on_close
     DetectorPanel.onExit = _panel_on_close
+
+    def _deferred_epics_connect(self):
+        import threading
+        import epics as _epics
+        import time as _time
+
+        prefix = self.prefix
+
+        def _check():
+            # Probe a single PV with a short timeout before touching any xraylarch
+            # detector code.  onConnectEpics triggers a C-level segfault when the
+            # xspress3 IOC is offline, so we must not call it at all in that case.
+            test_pvname = f"{prefix}DetectorState_RBV"
+            try:
+                pv = _epics.PV(test_pvname, auto_monitor=False)
+                pv.wait_for_connection(timeout=3.0)
+                reachable = bool(pv.connected)
+            except Exception as exc:
+                print(f"[xrf] CA probe failed for {prefix}: {exc}", flush=True)
+                reachable = False
+
+            if reachable:
+                wx.CallAfter(_connect_main, self)
+            else:
+                print(f"[xrf] {prefix} unreachable — detector tab left disconnected", flush=True)
+
+        def _connect_main(panel):
+            try:
+                panel.onConnectEpics(event=None, prefix=panel.prefix)
+            except Exception as exc:
+                print(f"[xrf] Connect failed for {panel.prefix}: {exc}", flush=True)
+                panel.det = None
+
+        threading.Thread(target=_check, daemon=True,
+                         name=f"epics-probe-{prefix}").start()
+
+    DetectorPanel._deferred_epics_connect = _deferred_epics_connect
 
     def _panel_show_roi_status(self, left, right, name="", panel=0):
         if left > right:
