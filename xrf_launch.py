@@ -133,7 +133,11 @@ _MOCK_DEFAULTS: list[dict] = [
 
 
 def _load_det_configs(use_mock: bool) -> list[dict]:
-    """Return detector list from pvs.yaml[detectors], or fall back to defaults."""
+    """Return detector list from pvs.yaml[detectors], or fall back to defaults.
+
+    In mock mode any real prefix is prefixed with 'MOCK:' so DetectorPanel
+    skips the onConnectEpics call (which would segfault against DummyPV).
+    """
     pv_file = PROJECT_DIR / "pvs.yaml"
     if pv_file.exists():
         try:
@@ -141,6 +145,13 @@ def _load_det_configs(use_mock: bool) -> list[dict]:
             data = yaml.safe_load(pv_file.read_text(encoding="utf-8")) or {}
             dets = data.get("detectors")
             if isinstance(dets, list) and dets:
+                if use_mock:
+                    # Ensure prefixes start with MOCK: so EPICS connection is skipped
+                    dets = [
+                        {**d, "prefix": d["prefix"] if d.get("prefix", "").upper().startswith("MOCK:")
+                                        else f"MOCK:{d['prefix']}"}
+                        for d in dets
+                    ]
                 return dets
         except Exception as exc:
             print(f"[xrf_launch] Could not parse pvs.yaml detectors: {exc}",
@@ -148,10 +159,25 @@ def _load_det_configs(use_mock: bool) -> list[dict]:
     return _MOCK_DEFAULTS if use_mock else _REAL_DEFAULTS
 
 
+def _load_controls_cfg() -> dict:
+    """Return the controls section from pvs.yaml, or empty dict on failure."""
+    pv_file = PROJECT_DIR / "pvs.yaml"
+    if pv_file.exists():
+        try:
+            import yaml
+            data = yaml.safe_load(pv_file.read_text(encoding="utf-8")) or {}
+            return data.get("controls", {})
+        except Exception as exc:
+            print(f"[xrf_launch] Could not parse pvs.yaml controls: {exc}",
+                  file=sys.stderr)
+    return {}
+
+
 # ── build DetectorConfig objects ──────────────────────────────────────────────
 
 use_mock = args.dummy or args.sim
 det_dicts = _load_det_configs(use_mock=use_mock)
+_controls_cfg = _load_controls_cfg()
 
 # Import after EPICS patch so xraylarch picks up the patched module.
 # build_app_classes() also loads wx/larch into the process, after which we
@@ -176,6 +202,8 @@ detectors = [
         environ_file=d.get("environ_file"),
         incident_energy_pvname=d.get("incident_energy_pvname"),
         incident_energy_units=d.get("incident_energy_units", "eV"),
+        stage_read_pv=d.get("stage_read_pv", ""),
+        stage_write_pv=d.get("stage_write_pv", ""),
     )
     for d in det_dicts
 ]
@@ -200,17 +228,209 @@ class GeOnlyFrame(wx.Frame):
 
         self.panels = []
         for det in detectors:
-            panel = DetectorPanel(
-                self.notebook,
-                detector=det,
-                title=det.name,
-                _larch=larch,
-            )
-            self.notebook.AddPage(panel, det.name)
-            self.panels.append(panel)
+            try:
+                panel = DetectorPanel(
+                    self.notebook,
+                    detector=det,
+                    title=det.name,
+                    _larch=larch,
+                )
+                self.notebook.AddPage(panel, det.name)
+                self.panels.append(panel)
+            except Exception as exc:
+                print(f"[xrf_launch] Could not load detector '{det.name}': {exc}",
+                      file=sys.stderr)
+                # Add a placeholder tab so the viewer still opens
+                placeholder = wx.Panel(self.notebook)
+                placeholder.SetBackgroundColour(wx.Colour(43, 43, 43))
+                msg = wx.StaticText(
+                    placeholder,
+                    label=f"Detector '{det.name}' unavailable\n\n{exc}",
+                )
+                msg.SetForegroundColour(wx.Colour(200, 100, 100))
+                sz = wx.BoxSizer(wx.VERTICAL)
+                sz.AddStretchSpacer()
+                sz.Add(msg, 0, wx.ALIGN_CENTER_HORIZONTAL)
+                sz.AddStretchSpacer()
+                placeholder.SetSizer(sz)
+                self.notebook.AddPage(placeholder, f"{det.name}  (unavailable)")
 
-        sizer = wx.BoxSizer(wx.VERTICAL)
+        # ── Stage position + Mono Energy sidebar (right of notebook) ──────────
+        self._stage_rows: list[dict] = []
+        stage_panel = wx.Panel(self)
+        stage_panel.SetBackgroundColour(wx.Colour(43, 43, 43))
+        stage_panel.SetMinSize((170, -1))
+        stage_col = wx.BoxSizer(wx.VERTICAL)
+
+        hdr = wx.StaticText(stage_panel, label="Stage Position")
+        hdr.SetForegroundColour(wx.Colour(200, 200, 200))
+        _font = hdr.GetFont()
+        _font.SetWeight(wx.FONTWEIGHT_BOLD)
+        hdr.SetFont(_font)
+        stage_col.Add(hdr, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.TOP | wx.BOTTOM, 8)
+        stage_col.Add(wx.StaticLine(stage_panel, style=wx.LI_HORIZONTAL),
+                      0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
+
+        for det in detectors:
+            rpv = det.stage_read_pv or ""
+            wpv = det.stage_write_pv or ""
+
+            card = wx.Panel(stage_panel)
+            card.SetBackgroundColour(wx.Colour(43, 43, 43))
+            card_sizer = wx.BoxSizer(wx.VERTICAL)
+
+            name_lbl = wx.StaticText(card, label=det.name.strip())
+            name_lbl.SetForegroundColour(wx.Colour(160, 200, 255))
+            _f2 = name_lbl.GetFont()
+            _f2.SetWeight(wx.FONTWEIGHT_BOLD)
+            name_lbl.SetFont(_f2)
+            card_sizer.Add(name_lbl, 0, wx.LEFT | wx.TOP, 8)
+
+            rbk_row = wx.BoxSizer(wx.HORIZONTAL)
+            rbk = wx.TextCtrl(card, value="--", size=(90, -1),
+                              style=wx.TE_READONLY | wx.TE_RIGHT | wx.BORDER_SIMPLE)
+            rbk.SetBackgroundColour(wx.Colour(30, 30, 30))
+            rbk.SetForegroundColour(wx.Colour(255, 255, 255))
+            rbk_row.Add(rbk, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+            mm_lbl = wx.StaticText(card, label="mm")
+            mm_lbl.SetForegroundColour(wx.Colour(136, 136, 136))
+            rbk_row.Add(mm_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+            card_sizer.Add(rbk_row, 0, wx.TOP, 4)
+
+            sp_row = wx.BoxSizer(wx.HORIZONTAL)
+            sp = wx.TextCtrl(card, size=(90, -1),
+                             style=wx.TE_PROCESS_ENTER | wx.BORDER_SIMPLE)
+            sp.SetBackgroundColour(wx.Colour(64, 64, 64))
+            sp.SetForegroundColour(wx.Colour(255, 255, 255))
+            sp.SetHint("setpoint")
+            sp_row.Add(sp, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+            set_btn = wx.Button(card, label="Set", size=(44, -1))
+            sp_row.Add(set_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+            card_sizer.Add(sp_row, 0, wx.TOP | wx.BOTTOM, 4)
+
+            card.SetSizer(card_sizer)
+            stage_col.Add(card, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+            stage_col.Add(wx.StaticLine(stage_panel, style=wx.LI_HORIZONTAL),
+                          0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 6)
+
+            row_info = dict(rbk=rbk, sp=sp, read_pv=rpv, write_pv=wpv)
+            self._stage_rows.append(row_info)
+
+            def _make_set(info):
+                def _on_set(_evt):
+                    if not info["write_pv"]:
+                        return
+                    try:
+                        val = float(info["sp"].GetValue())
+                        import epics as _epics
+                        _epics.caput(info["write_pv"], val)
+                    except (ValueError, TypeError, Exception):
+                        pass
+                return _on_set
+            handler = _make_set(row_info)
+            set_btn.Bind(wx.EVT_BUTTON, handler)
+            sp.Bind(wx.EVT_TEXT_ENTER, handler)
+
+            if rpv:
+                def _make_cb(info):
+                    def _cb(value=None, char_value=None, **_kw):
+                        try:
+                            txt = f"{float(value):.4g}"
+                        except (TypeError, ValueError):
+                            txt = str(char_value or value or "--")
+                        wx.CallAfter(info["rbk"].SetValue, txt)
+                    return _cb
+                try:
+                    import epics as _epics
+                    pv = _epics.PV(rpv, auto_monitor=True)
+                    pv.add_callback(_make_cb(row_info))
+                except Exception:
+                    pass
+
+        # ── Mono Energy card ──────────────────────────────────────────────────
+        mono_cfg = _controls_cfg.get("Mono Energy", {})
+        mono_read_pv  = mono_cfg.get("read_pv",  "BL1607-I21:Mono:Energy:EV:fbk")
+        mono_write_pv = mono_cfg.get("write_pv", "BL1607-I21:Mono:Energy:EV")
+
+        stage_col.Add(wx.StaticLine(stage_panel, style=wx.LI_HORIZONTAL),
+                      0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 6)
+
+        mono_card = wx.Panel(stage_panel)
+        mono_card.SetBackgroundColour(wx.Colour(43, 43, 43))
+        mono_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        mono_title = wx.StaticText(mono_card, label="Mono Energy")
+        mono_title.SetForegroundColour(wx.Colour(160, 200, 255))
+        _fm = mono_title.GetFont()
+        _fm.SetWeight(wx.FONTWEIGHT_BOLD)
+        mono_title.SetFont(_fm)
+        mono_sizer.Add(mono_title, 0, wx.LEFT | wx.TOP, 8)
+
+        mono_rbk_row = wx.BoxSizer(wx.HORIZONTAL)
+        self._mono_rbk = wx.TextCtrl(mono_card, value="--", size=(100, -1),
+                                     style=wx.TE_READONLY | wx.TE_RIGHT | wx.BORDER_SIMPLE)
+        self._mono_rbk.SetBackgroundColour(wx.Colour(30, 30, 30))
+        self._mono_rbk.SetForegroundColour(wx.Colour(255, 255, 255))
+        mono_rbk_row.Add(self._mono_rbk, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        ev_lbl = wx.StaticText(mono_card, label="eV")
+        ev_lbl.SetForegroundColour(wx.Colour(136, 136, 136))
+        mono_rbk_row.Add(ev_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+        mono_sizer.Add(mono_rbk_row, 0, wx.TOP, 4)
+
+        mono_sp_row = wx.BoxSizer(wx.HORIZONTAL)
+        self._mono_sp = wx.TextCtrl(mono_card, size=(100, -1),
+                                    style=wx.TE_PROCESS_ENTER | wx.BORDER_SIMPLE)
+        self._mono_sp.SetBackgroundColour(wx.Colour(64, 64, 64))
+        self._mono_sp.SetForegroundColour(wx.Colour(255, 255, 255))
+        self._mono_sp.SetHint("setpoint eV")
+        mono_sp_row.Add(self._mono_sp, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        mono_set_btn = wx.Button(mono_card, label="Set", size=(44, -1))
+        mono_sp_row.Add(mono_set_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+        mono_sizer.Add(mono_sp_row, 0, wx.TOP | wx.BOTTOM, 4)
+
+        mono_card.SetSizer(mono_sizer)
+        stage_col.Add(mono_card, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+
+        _mono_write = mono_write_pv
+
+        def _on_mono_set(_evt):
+            if not _mono_write:
+                return
+            try:
+                val = float(self._mono_sp.GetValue())
+                import epics as _epics
+                _epics.caput(_mono_write, val)
+            except (ValueError, TypeError, Exception):
+                pass
+
+        mono_set_btn.Bind(wx.EVT_BUTTON, _on_mono_set)
+        self._mono_sp.Bind(wx.EVT_TEXT_ENTER, _on_mono_set)
+
+        if mono_read_pv:
+            try:
+                import epics as _epics
+                _mono_pv = _epics.PV(mono_read_pv, auto_monitor=True)
+
+                def _mono_cb(value=None, char_value=None, **_kw):
+                    try:
+                        txt = f"{float(value):.2f}"
+                    except (TypeError, ValueError):
+                        txt = str(char_value or value or "--")
+                    wx.CallAfter(self._mono_rbk.SetValue, txt)
+
+                _mono_pv.add_callback(_mono_cb)
+            except Exception:
+                pass
+
+        stage_col.AddStretchSpacer(1)
+        stage_panel.SetSizer(stage_col)
+        stage_panel.Layout()
+
+        # ── Main layout (horizontal split) ────────────────────────────────────
+        sizer = wx.BoxSizer(wx.HORIZONTAL)
         sizer.Add(self.notebook, 1, wx.EXPAND)
+        sizer.Add(wx.StaticLine(self, style=wx.LI_VERTICAL), 0, wx.EXPAND)
+        sizer.Add(stage_panel, 0, wx.EXPAND)
         self.SetSizer(sizer)
 
         try:
@@ -260,12 +480,17 @@ class GeOnlyApp(Xspress3ViewerApp):
     """EpicsXRFApp subclass that creates GeOnlyFrame instead of DualDetectorHostFrame."""
 
     def createApp(self):
-        frame = GeOnlyFrame(
-            detectors=self.detectors,
-            size=self.size,
-            title=self.title,
-            _larch=self._larch,
-        )
+        try:
+            frame = GeOnlyFrame(
+                detectors=self.detectors,
+                size=self.size,
+                title=self.title,
+                _larch=self._larch,
+            )
+        except Exception as exc:
+            print(f"[xrf_launch] GeOnlyFrame failed: {exc}", flush=True)
+            import traceback; traceback.print_exc()
+            return False
         frame.Show()
         frame.Raise()
         self.SetTopWindow(frame)
@@ -278,6 +503,5 @@ app = GeOnlyApp(
     detectors=detectors,
     size=(1300, 900),
     title=f"XAS XRF Viewer — CLS 1607-7-I21" + (f"  [{mode_tag}]" if mode_tag else ""),
-    use_sim=args.sim,
 )
 app.MainLoop()

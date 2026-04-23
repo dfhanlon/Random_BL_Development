@@ -27,6 +27,8 @@ class DetectorConfig:
     environ_file: str | None = None
     incident_energy_pvname: str | None = None
     incident_energy_units: str = "eV"
+    stage_read_pv: str = ""
+    stage_write_pv: str = ""
 
 
 PV_CONFIG_FILE = Path(__file__).with_name("pvs.yaml")
@@ -2770,6 +2772,11 @@ def build_app_classes():
             psizer.Add(self.wids["deadtime"], (1, 9), (1, 1), style | wx.ALL, 3)
             psizer.Add(roipanel, (2, 2), (1, 8), style | wx.ALL, 12)
 
+            if self.nmca > 1:
+                sum_all_btn = wx.Button(pane, label="Sum All Channels", size=(160, -1))
+                sum_all_btn.Bind(wx.EVT_BUTTON, self.onSumAllChannels)
+                psizer.Add(sum_all_btn, (3, 2), (1, 2), style | wx.ALL, 3)
+
             pane.SetSizer(psizer)
 
             if self.det is not None:
@@ -2899,13 +2906,51 @@ def build_app_classes():
     ):
         setattr(DetectorPanel, name, getattr(EpicsXRFDisplayFrame, name))
 
+    def _do_live_sum(panel):
+        """Re-sum all MCA channels and update the plot. Called each timer tick in sum mode."""
+        import copy
+        import numpy as np
+        try:
+            base = panel.det.get_mca(mca=1)
+            summed = copy.deepcopy(base)
+            total = np.zeros_like(base.counts, dtype=float)
+            for i in range(1, panel.nmca + 1):
+                counts = panel.det.get_array(mca=i)
+                if counts is not None:
+                    total += counts.astype(float)
+            summed.counts = total
+            summed.label = f"Sum (all {panel.nmca} ch)"
+            panel.mca = summed
+            panel.needs_newplot = False
+            EpicsXRFDisplayFrame.plotmca(panel, summed, set_title=False, init=False)
+        except Exception as exc:
+            print(f"[xrf] live sum error: {exc}", flush=True)
+
     def _safe_show_mca(self, *args, **kwargs):
-        # Avoid crashes when EPICS connection is not established (e.g. MOCK prefixes)
         if getattr(self, "det", None) is None:
+            return
+        if getattr(self, "_sum_mode", False):
+            _do_live_sum(self)
             return
         return EpicsXRFDisplayFrame.show_mca(self, *args, **kwargs)
 
     DetectorPanel.show_mca = _safe_show_mca
+
+    def _on_sum_all_channels(self, _event=None):
+        """Enter live sum mode: re-sum all channels on every timer tick."""
+        if getattr(self, "det", None) is None:
+            return
+        self._sum_mode = True
+        self.show_mca()
+
+    DetectorPanel.onSumAllChannels = _on_sum_all_channels
+
+    def _safe_onSelectDet(self, event=None, index=0, init=False, **kws):
+        """Exit sum mode when the user selects a single channel."""
+        self._sum_mode = False
+        EpicsXRFDisplayFrame.onSelectDet(self, event=event, index=index, init=init, **kws)
+
+    DetectorPanel.onSelectDet = _safe_onSelectDet
 
     def _safe_update_data(self, *args, **kwargs):
         # Avoid crashes when EPICS connection is not established (e.g. MOCK prefixes)

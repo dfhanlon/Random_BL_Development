@@ -1418,6 +1418,8 @@ class CryostatPanel(QGroupBox):
             QMessageBox.warning(self, "Cryostat Trend", f"Matplotlib not available: {exc}")
             return
 
+        from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavToolbar
+
         win = QWidget()
         win.setWindowTitle("Cryostat Trends")
         win.resize(900, 500)
@@ -1433,6 +1435,9 @@ class CryostatPanel(QGroupBox):
         self._trend_ax = ax
         self._trend_ax_p = ax_p
 
+        toolbar = NavToolbar(canvas, win)
+        toolbar.setStyleSheet("background:#2b2b2b; color:#e0e0e0;")
+        lay.addWidget(toolbar)
         lay.addWidget(canvas)
 
         timer = QTimer(win)
@@ -1448,6 +1453,13 @@ class CryostatPanel(QGroupBox):
             return
         ax = self._trend_ax
         ax_p = self._trend_ax_p
+
+        # Preserve any zoom/pan the user has applied
+        had_data = ax.has_data()
+        saved_xlim = ax.get_xlim() if had_data else None
+        saved_ylim = ax.get_ylim() if had_data else None
+        saved_ylim_p = ax_p.get_ylim() if had_data else None
+
         ax.clear()
         ax_p.clear()
 
@@ -1467,7 +1479,13 @@ class CryostatPanel(QGroupBox):
         ax_p.tick_params(axis="y", colors="#4488cc")
         ax.tick_params(axis="x", colors="#888888")
         ax.grid(True, alpha=0.2, color="#555555")
-        self._trend_canvas.draw()
+
+        if had_data and saved_xlim is not None:
+            ax.set_xlim(saved_xlim)
+            ax.set_ylim(saved_ylim)
+            ax_p.set_ylim(saved_ylim_p)
+
+        self._trend_canvas.draw_idle()
 
     def _set_temp(self):
         if self._tsp_write and self.t_input.text().strip():
@@ -1953,6 +1971,7 @@ class BeamlineControlWindow(QMainWindow):
 
         try:
             from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+            from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavToolbar
             from matplotlib.figure import Figure
         except Exception as exc:
             from PyQt5.QtWidgets import QMessageBox
@@ -1986,11 +2005,18 @@ class BeamlineControlWindow(QMainWindow):
         figure.subplots_adjust(hspace=0.45)
 
         canvas = FigureCanvas(figure)
+        toolbar = NavToolbar(canvas, win)
+        toolbar.setStyleSheet("background:#2b2b2b; color:#e0e0e0;")
+        lay.addWidget(toolbar)
         lay.addWidget(canvas)
 
         def _refresh():
             last_idx = len(axes_list) - 1
             for i, (ax, card) in enumerate(zip(axes_list, self._ic_cards)):
+                had_data = ax.has_data()
+                saved_xlim = ax.get_xlim() if had_data else None
+                saved_ylim = ax.get_ylim() if had_data else None
+
                 ax.clear()
                 ax.set_facecolor("#1e1e1e")
                 ax.set_title(card.label, color="#e0e0e0", fontsize=10)
@@ -2008,12 +2034,15 @@ class BeamlineControlWindow(QMainWindow):
                     marker = "o" if len(vals) == 1 else ("." if len(vals) < 5 else None)
                     ax.plot(rel, vals, color="#4488cc",
                             linewidth=1.2, marker=marker, markersize=4)
+                    if had_data and saved_xlim is not None:
+                        ax.set_xlim(saved_xlim)
+                        ax.set_ylim(saved_ylim)
                 else:
                     ax.text(0.5, 0.5, "No data yet", transform=ax.transAxes,
                             color="#666666", ha="center", va="center", fontsize=9)
             if axes_list:
                 axes_list[-1].set_xlabel("Time (s, relative to latest)", color="#888888", fontsize=9)
-            canvas.draw()
+            canvas.draw_idle()
 
         timer = QTimer(win)
         timer.timeout.connect(_refresh)
