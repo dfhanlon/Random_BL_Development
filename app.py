@@ -137,9 +137,9 @@ def build_app_classes():
             self.cryostat_frame = None
             self.cryostat_state = {}
             self.cryostat_history = {
-                "times": deque(maxlen=600),
-                "temperature": deque(maxlen=600),
-                "pressure": deque(maxlen=600),
+                "times": deque(maxlen=3600),
+                "temperature": deque(maxlen=3600),
+                "pressure": deque(maxlen=3600),
             }
             self.cryostat_trend_canvas = None
             self.cryostat_trend_axes = None
@@ -158,6 +158,7 @@ def build_app_classes():
                 label: {
                     "value": None,
                     "delay": None,
+                    "scale_pv_value": None,
                     "unit_num": None,
                     "unit_text": None,
                     "display_mode": "counts",
@@ -681,12 +682,15 @@ def build_app_classes():
                         "label": label,
                         "read_pv": cfg.get("read_pv", ""),
                         "write_pv": None,
+                        "scale_pv": cfg.get("scale_pv", ""),
                         "unit_num_pv": cfg.get("unit_num_pv", cfg.get("unit_pv", "")),
                         "unit_pv": cfg.get("unit_text_pv", ""),
                         "derived": cfg.get("derived", {}),
                         "gain_up_pv": cfg.get("gain_up_pv", ""),
                         "gain_down_pv": cfg.get("gain_down_pv", ""),
                         "gain_step_value": cfg.get("gain_step_value", 1),
+                        "unit_num_labels": cfg.get("unit_num_labels", {}),
+                        "unit_text_labels": cfg.get("unit_text_labels", {}),
                         "photon_conversion": cfg.get("photon_conversion", {}),
                         "kind": "numeric",
                         "units": "",
@@ -863,6 +867,56 @@ def build_app_classes():
             mode = self.ion_chamber_state.get(label, {}).get("display_mode", "counts")
             return "ph/s" if mode == "photon_rate" else "cts"
 
+        def _ic_keithley_sensitivity_av(self, label):
+            """Return live Keithley 428 sensitivity in A/V, or None if unknown."""
+            state = self.ion_chamber_state.get(label, {})
+            num_str = state.get("unit_num")
+            text_str = state.get("unit_text")
+            if num_str is None or text_str is None:
+                return None
+            # unit_num PV char_value is e.g. "10"; fall back to raw index lookup
+            try:
+                num = float(str(num_str).strip())
+            except ValueError:
+                try:
+                    idx = int(float(str(num_str).strip()))
+                    cfg = (self.pv_controls.get(label) or {}).get("config", {})
+                    labels = cfg.get("unit_num_labels", {})
+                    num = float(labels.get(idx, labels.get(str(idx), 1)))
+                except Exception:
+                    return None
+            # unit_text PV char_value is e.g. "uA/V"
+            _multipliers = {"pa/v": 1e-12, "na/v": 1e-9, "ua/v": 1e-6, "ma/v": 1e-3}
+            text_lower = str(text_str).strip().lower()
+            multiplier = _multipliers.get(text_lower)
+            if multiplier is None:
+                try:
+                    idx = int(float(text_lower))
+                    cfg = (self.pv_controls.get(label) or {}).get("config", {})
+                    labels = cfg.get("unit_text_labels", {})
+                    key = str(labels.get(idx, labels.get(str(idx), "nA/V"))).strip().lower()
+                    multiplier = _multipliers.get(key, 1e-9)
+                except Exception:
+                    return None
+            return num * multiplier
+
+        def _ic_gas_eta(self, gas, E_keV, L_cm):
+            """Absorption fraction for IC fill gas at E_keV over L_cm at STP."""
+            import math
+            # NIST XCOM power-law fits: μ/ρ = A × E_keV^(-n) [cm²/g], above K-edges
+            _gas_params = {
+                "n2":      (1.25e-3,  1870.0, 3.00),
+                "nitrogen":(1.25e-3,  1870.0, 3.00),
+                "ar":      (1.784e-3, 6.17e4, 3.20),
+                "argon":   (1.784e-3, 6.17e4, 3.20),
+            }
+            p = _gas_params.get(str(gas).lower().strip())
+            if p is None:
+                return None
+            rho, A, n = p
+            mu = rho * A * (E_keV ** (-n))
+            return 1.0 - math.exp(-mu * L_cm)
+
         def _ion_chamber_photon_rate(self, label):
             row = self.pv_controls.get(label)
             if row is None:
@@ -872,18 +926,48 @@ def build_app_classes():
             if not isinstance(photon_cfg, dict) or not photon_cfg:
                 return None, ""
 
-            state = self.ion_chamber_state.get(label, {})
-            counts = state.get("value")
-            delay_ms = state.get("delay")
-            if counts is None or delay_ms in (None, 0, 0.0):
-                return None, photon_cfg.get("units", "ph/s")
+            units = photon_cfg.get("units", "ph/s")
+            voltage, _ = self._ion_chamber_voltage(label)
+            if voltage is None:
+                return None, units
+
+            ic_length_cm = photon_cfg.get("ic_length_cm")
+            gas = photon_cfg.get("gas", "N2")
+            W_eV = float(photon_cfg.get("W_eV", 35.0))
+            cal_scale = float(photon_cfg.get("scale", 1.0))
+
+            if ic_length_cm is None:
+                # No physics params — fall back to fixed scale
+                try:
+                    return cal_scale * float(voltage), units
+                except Exception:
+                    return None, units
+
+            # Keithley sensitivity (A/V) from live PV readbacks
+            sensitivity_av = self._ic_keithley_sensitivity_av(label)
+            if sensitivity_av is None or sensitivity_av <= 0:
+                return None, units
+
+            # Photon energy from the monochromator readback (eV)
+            mono_pv = (self.pv_config.get("controls", {})
+                       .get("Mono Energy", {}).get("read_pv"))
+            E_eV = self._read_pv(mono_pv) if mono_pv else None
+            if E_eV is None or float(E_eV) <= 0:
+                return None, units
+            E_keV = float(E_eV) / 1000.0
+
+            # Absorption fraction for the IC fill gas
+            eta = self._ic_gas_eta(gas, E_keV, float(ic_length_cm))
+            if eta is None or eta <= 0:
+                return None, units
 
             try:
-                scale = float(photon_cfg.get("scale", 1.0))
-                rate = scale * float(counts) / (float(delay_ms) / 1000.0)
-                return rate, photon_cfg.get("units", "ph/s")
+                I_A = float(voltage) * sensitivity_av
+                pairs_per_photon = (float(E_eV) / W_eV) * eta
+                flux = cal_scale * I_A / (1.6e-19 * pairs_per_photon)
+                return flux, units
             except Exception:
-                return None, photon_cfg.get("units", "ph/s")
+                return None, units
 
         def _ion_chamber_voltage(self, label):
             row = self.pv_controls.get(label)
@@ -897,29 +981,41 @@ def build_app_classes():
             state = self.ion_chamber_state.get(label, {})
             counts = state.get("value")
             delay_ms = state.get("delay")
+            scale_pv_value = state.get("scale_pv_value")
+
             if counts is None and cfg.get("read_pv"):
                 counts = self._read_pv(cfg.get("read_pv"), cfg)
             if delay_ms in (None, 0, 0.0) and derived_cfg.get("delay_pv"):
                 delay_ms = self._read_pv(derived_cfg.get("delay_pv"))
-            if counts is None or delay_ms in (None, 0, 0.0):
+            if scale_pv_value is None and cfg.get("scale_pv"):
+                scale_pv_value = self._read_pv(cfg.get("scale_pv"))
+
+            if counts is None:
                 return None, derived_cfg.get("units", "")
 
             expression = derived_cfg.get("expression")
+            overall_scale = float(derived_cfg.get("scale", 1.0))
+
             if expression:
                 names = {
                     "counts": float(counts),
-                    "delay_ms": float(delay_ms),
-                    "delay_s": float(delay_ms) / 1000.0,
                     "value": float(counts),
+                    "read_pv": float(counts),
+                    "scale_pv": float(scale_pv_value) if scale_pv_value is not None else 1.0,
+                    "delay_ms": float(delay_ms) if delay_ms not in (None, 0, 0.0) else 0.0,
+                    "delay_s": float(delay_ms) / 1000.0 if delay_ms not in (None, 0, 0.0) else 0.0,
                 }
                 try:
-                    voltage = float(self._safe_eval_simple_expression(expression, names))
-                    return voltage, derived_cfg.get("units", "")
+                    raw = float(self._safe_eval_simple_expression(expression, names))
+                    return raw * overall_scale, derived_cfg.get("units", "")
                 except Exception:
                     return None, derived_cfg.get("units", "")
 
+            # Fallback: legacy MCS scaler formula — counts / dwell_time × scale
+            if delay_ms in (None, 0, 0.0):
+                return None, derived_cfg.get("units", "")
             try:
-                voltage = float(derived_cfg.get("scale", 1.0)) * float(counts) / (float(delay_ms) / 1000.0)
+                voltage = overall_scale * float(counts) / (float(delay_ms) / 1000.0)
                 return voltage, derived_cfg.get("units", "")
             except Exception:
                 return None, derived_cfg.get("units", "")
@@ -941,7 +1037,7 @@ def build_app_classes():
             if row is None:
                 return
             cfg = row["config"]
-            pvname = cfg.get("gain_up_pv") if direction == "up" else cfg.get("gain_down_pv")
+            pvname = cfg.get("gain_down_pv") if direction == "up" else cfg.get("gain_up_pv")
             command_value = cfg.get("gain_step_value", 1)
             if not pvname:
                 self.SetStatusText(f"No gain {'up' if direction == 'up' else 'down'} PV configured for {label}", 0)
@@ -1762,6 +1858,7 @@ def build_app_classes():
                 "Mono Energy", "Dwell Time", "Stage Z", "Stage Y",
                 "M1 Pitch", "JJ Vert Gap", "JJ Vert Center",
                 "JJ Hor Gap", "JJ Hor Center",
+                "Det Stage Inboard", "Det Stage Outboard",
             }
             dbhr_labels = {"DBHR M1", "DBHR M2", "DBHR Pitch"}
             enabled_controls = self._enabled_items("controls")
@@ -1922,6 +2019,16 @@ def build_app_classes():
                     )
                     self._pv_callbacks.append((delay_pv, cb_index))
 
+                scale_pvname = cfg.get("scale_pv")
+                scale_pv_obj = self._get_pv(scale_pvname)
+                if scale_pv_obj is not None:
+                    cb_index = scale_pv_obj.add_callback(
+                        lambda pvname=None, value=None, lbl=label, **kws: wx.CallAfter(
+                            self._apply_ion_chamber_scale_pv_update, lbl, value
+                        )
+                    )
+                    self._pv_callbacks.append((scale_pv_obj, cb_index))
+
             cryostat_pvs = set()
             for cfg in self._cryostat_config().values():
                 if not isinstance(cfg, dict):
@@ -2007,6 +2114,11 @@ def build_app_classes():
         def _apply_ion_chamber_delay_update(self, label, value):
             if label in self.ion_chamber_state:
                 self.ion_chamber_state[label]["delay"] = value
+            self._update_ion_chamber_derived_display(label)
+
+        def _apply_ion_chamber_scale_pv_update(self, label, value):
+            if label in self.ion_chamber_state:
+                self.ion_chamber_state[label]["scale_pv_value"] = value
             self._update_ion_chamber_derived_display(label)
 
         def _update_ion_chamber_derived_display(self, label):
@@ -2175,6 +2287,8 @@ def build_app_classes():
             if self.ion_chamber_trend_canvas is None or self.ion_chamber_trend_axes is None:
                 return
 
+            TREND_WINDOW_S = 120
+
             axes = self.ion_chamber_trend_axes
             axes.clear()
 
@@ -2187,20 +2301,31 @@ def build_app_classes():
                 return
 
             plotted = False
+            all_y = []
             for label, history in self.ion_chamber_history.items():
                 if not self.ion_chamber_trend_selection.get(label, True):
                     continue
                 if not history["times"]:
                     continue
                 rel_time = [t - latest_time for t in history["times"]]
-                axes.plot(rel_time, list(history["values"]), label=label)
+                values = list(history["values"])
+                pairs = [(t, v) for t, v in zip(rel_time, values) if t >= -TREND_WINDOW_S]
+                if not pairs:
+                    continue
+                rt, rv = zip(*pairs)
+                axes.plot(rt, rv, label=label)
+                all_y.extend(rv)
                 plotted = True
 
+            axes.set_xlim(-TREND_WINDOW_S, 0)
             axes.set_xlabel("Time relative to latest sample (s)")
             axes.set_ylabel("Signal")
             axes.set_title("Ion Chamber Trends")
             axes.grid(True, alpha=0.3)
-            if plotted:
+            if plotted and all_y:
+                ymin, ymax = min(all_y), max(all_y)
+                pad = (ymax - ymin) * 0.1 if ymax != ymin else max(abs(ymax) * 0.1, 1.0)
+                axes.set_ylim(ymin - pad, ymax + pad)
                 axes.legend(loc="best")
             self.ion_chamber_trend_canvas.draw()
 
@@ -2235,13 +2360,19 @@ def build_app_classes():
                 event.Skip()
 
         def _refresh_cryostat_trend_plot(self):
-            if self.cryostat_trend_canvas is None or self.cryostat_trend_axes is None:
+            if self.cryostat_trend_canvas is None:
                 return
 
-            axes = self.cryostat_trend_axes
-            pressure_axes = self.cryostat_trend_pressure_axes
-            axes.clear()
-            pressure_axes.clear()
+            CRYO_WINDOW_S = 1800
+
+            # Recreate axes fresh each call — clearing a twinx pair in-place
+            # breaks matplotlib's shared-axis state and prevents set_ylim from sticking.
+            figure = self.cryostat_trend_canvas.figure
+            figure.clear()
+            axes = figure.add_subplot(111)
+            pressure_axes = axes.twinx()
+            self.cryostat_trend_axes = axes
+            self.cryostat_trend_pressure_axes = pressure_axes
 
             if not self.cryostat_history["times"]:
                 self.cryostat_trend_canvas.draw()
@@ -2255,6 +2386,8 @@ def build_app_classes():
             temp_line = axes.plot(rel_time, temps, color="firebrick", label="Temperature")[0]
             pressure_line = pressure_axes.plot(rel_time, pressures, color="steelblue", label="Pressure")[0]
 
+            x_left = min(rel_time[0] if rel_time else -CRYO_WINDOW_S, -CRYO_WINDOW_S)
+            axes.set_xlim(x_left, 0)
             axes.set_xlabel("Time relative to latest sample (s)")
             axes.set_ylabel("Temperature (K)", color="firebrick")
             pressure_axes.set_ylabel("Pressure (mbar)", color="steelblue")
@@ -2262,6 +2395,16 @@ def build_app_classes():
             pressure_axes.tick_params(axis="y", colors="steelblue")
             axes.set_title("Cryostat Pressure and Temperature Trends")
             axes.grid(True, alpha=0.3)
+
+            if temps:
+                ymin, ymax = min(temps), max(temps)
+                pad = (ymax - ymin) * 0.1 if ymax != ymin else max(abs(ymax) * 0.1, 1.0)
+                axes.set_ylim(ymin - pad, ymax + pad)
+            if pressures:
+                ymin, ymax = min(pressures), max(pressures)
+                pad = (ymax - ymin) * 0.1 if ymax != ymin else max(abs(ymax) * 0.1, 1.0)
+                pressure_axes.set_ylim(ymin - pad, ymax + pad)
+
             axes.legend([temp_line, pressure_line], ["Temperature", "Pressure"], loc="best")
             self.cryostat_trend_canvas.draw()
 
@@ -2313,6 +2456,9 @@ def build_app_classes():
                 delay_pv = cfg.get("derived", {}).get("delay_pv")
                 if cfg["label"] in self.ion_chamber_state and delay_pv:
                     self.ion_chamber_state[cfg["label"]]["delay"] = self._read_pv(delay_pv)
+                scale_pvname = cfg.get("scale_pv")
+                if cfg["label"] in self.ion_chamber_state and scale_pvname:
+                    self.ion_chamber_state[cfg["label"]]["scale_pv_value"] = self._read_pv(scale_pvname)
                 self._update_ion_chamber_derived_display(cfg["label"])
             self._update_cryostat_panel()
             self._refresh_ion_chamber_trend_plot()
@@ -2595,12 +2741,9 @@ def build_app_classes():
             self.icon_file = str(Path(icondir, "ptable.ico"))
 
             self.createMainPanel()
-            # Defer EPICS connection so the frame shows immediately.
-            # onConnectEpics can block for several seconds on CA timeouts when
-            # a detector is powered off; calling it synchronously here would
-            # prevent GeOnlyFrame from ever appearing.
+            # Skip EPICS connection for mock prefixes (for debugging)
             if not self.prefix.upper().startswith("MOCK"):
-                wx.CallAfter(self._deferred_epics_connect)
+                self.onConnectEpics(event=None, prefix=self.prefix)
             self.SetTitle(f"{self.main_title}: {title}")
 
         def createMenus(self):
@@ -2935,10 +3078,7 @@ def build_app_classes():
         if getattr(self, "_sum_mode", False):
             _do_live_sum(self)
             return
-        try:
-            return EpicsXRFDisplayFrame.show_mca(self, *args, **kwargs)
-        except Exception as exc:
-            print(f"[xrf] show_mca error: {exc}", flush=True)
+        return EpicsXRFDisplayFrame.show_mca(self, *args, **kwargs)
 
     DetectorPanel.show_mca = _safe_show_mca
 
@@ -2954,22 +3094,15 @@ def build_app_classes():
     def _safe_onSelectDet(self, event=None, index=0, init=False, **kws):
         """Exit sum mode when the user selects a single channel."""
         self._sum_mode = False
-        if getattr(self, "det", None) is None:
-            return
-        try:
-            EpicsXRFDisplayFrame.onSelectDet(self, event=event, index=index, init=init, **kws)
-        except Exception as exc:
-            print(f"[xrf] onSelectDet error: {exc}", flush=True)
+        EpicsXRFDisplayFrame.onSelectDet(self, event=event, index=index, init=init, **kws)
 
     DetectorPanel.onSelectDet = _safe_onSelectDet
 
     def _safe_update_data(self, *args, **kwargs):
+        # Avoid crashes when EPICS connection is not established (e.g. MOCK prefixes)
         if getattr(self, "det", None) is None:
             return
-        try:
-            return EpicsXRFDisplayFrame.UpdateData(self, *args, **kwargs)
-        except Exception as exc:
-            print(f"[xrf] UpdateData error: {exc}", flush=True)
+        return EpicsXRFDisplayFrame.UpdateData(self, *args, **kwargs)
 
     DetectorPanel.UpdateData = _safe_update_data
 
@@ -2984,43 +3117,6 @@ def build_app_classes():
 
     DetectorPanel.onClose = _panel_on_close
     DetectorPanel.onExit = _panel_on_close
-
-    def _deferred_epics_connect(self):
-        import threading
-        import epics as _epics
-        import time as _time
-
-        prefix = self.prefix
-
-        def _check():
-            # Probe a single PV with a short timeout before touching any xraylarch
-            # detector code.  onConnectEpics triggers a C-level segfault when the
-            # xspress3 IOC is offline, so we must not call it at all in that case.
-            test_pvname = f"{prefix}DetectorState_RBV"
-            try:
-                pv = _epics.PV(test_pvname, auto_monitor=False)
-                pv.wait_for_connection(timeout=3.0)
-                reachable = bool(pv.connected)
-            except Exception as exc:
-                print(f"[xrf] CA probe failed for {prefix}: {exc}", flush=True)
-                reachable = False
-
-            if reachable:
-                wx.CallAfter(_connect_main, self)
-            else:
-                print(f"[xrf] {prefix} unreachable — detector tab left disconnected", flush=True)
-
-        def _connect_main(panel):
-            try:
-                panel.onConnectEpics(event=None, prefix=panel.prefix)
-            except Exception as exc:
-                print(f"[xrf] Connect failed for {panel.prefix}: {exc}", flush=True)
-                panel.det = None
-
-        threading.Thread(target=_check, daemon=True,
-                         name=f"epics-probe-{prefix}").start()
-
-    DetectorPanel._deferred_epics_connect = _deferred_epics_connect
 
     def _panel_show_roi_status(self, left, right, name="", panel=0):
         if left > right:

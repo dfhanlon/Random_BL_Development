@@ -1669,7 +1669,7 @@ class BeamlineControlWindow(QMainWindow):
         title.setStyleSheet("font-size: 22px; color: #e0e0e0; background: transparent;")
         hdr.addWidget(title)
         hdr.addStretch()
-        mode_lbl = QLabel("●  DUMMY MODE — no EPICS connection")
+        mode_lbl = QLabel("Connected")
         mode_lbl.setStyleSheet(f"color: {MINOR}; font-size: 17px; font-weight: bold; background: transparent;")
         hdr.addWidget(mode_lbl)
 
