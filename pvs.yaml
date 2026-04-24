@@ -1,0 +1,353 @@
+status:
+  Ring Status:
+    read_pv: PCT1402-01:mA:fbk
+    status_threshold: 140.0
+    status_threshold_comparison: gt
+    status_good_label: OK
+    status_bad_label: BAD
+  FE Shutter:
+    read_pv: IPSH1407-I00-02:state
+    status_threshold: 0.5
+    status_threshold_comparison: gt
+    status_good_label: OPEN
+    status_bad_label: CLOSED
+  Valves Status:
+    read_pv: PLC2406-7-03:BL:ready:in
+    status_threshold: 0.5
+    status_threshold_comparison: gt
+    status_good_label: OK
+    status_bad_label: BAD
+  Motor Interlocks:
+    read_pv: SWES1607-7-01:Em:Off
+    status_threshold: 0.5
+    status_threshold_comparison: gt
+    status_good_label: OK
+    status_bad_label: BAD
+  Wiggler Status:
+    read_pv: WIG1407-01:gap:mm:fbk
+    status_threshold: 12.0
+    status_threshold_comparison: lt
+    status_good_label: OK
+    status_bad_label: BAD
+  FE Safety Shutter:
+    read_pv: SSH1407-I00-01:state
+    status_threshold: 0.5
+    status_threshold_comparison: gt
+    status_good_label: OPEN
+    status_bad_label: CLOSED
+  M1 Blade Mask:
+    read_pv: SMTR1607-5-I21-08:mm:fbk
+    status_threshold: 0.1
+    status_threshold_comparison: gt
+    status_good_label: OPEN
+    status_bad_label: CLOSED
+
+  Mono Mask:
+    derived:
+      pv_1: SMTR1607-5-I21-09:mm:fbk
+      pv_2: SMTR1607-5-I21-10:mm:fbk
+      operation: subtract
+    status_threshold: 0.1
+    status_threshold_comparison: gt
+    status_good_label: OPEN
+    status_bad_label: CLOSED
+
+  M2 Paddle:
+    read_pv: SMTR1607-5-I21-28:mm:sp
+    status_threshold: 40
+    status_threshold_comparison: eq
+    status_good_label: IN
+    status_bad_label: OUT
+
+  POE Shutter:
+    read_pv: SSH1607-5-I21-01:state
+    status_threshold: 0.5
+    status_threshold_comparison: lt
+    status_good_label: OPEN
+    status_bad_label: CLOSED
+  IC HV:
+    derived:
+      pvs:
+        ps_701_a: PS1607-701:A:voltage
+        ps_701_b: PS1607-701:B:voltage
+        ps_702_a: PS1607-702:A:voltage
+      expression: (ps_701_a > 1800) * (ps_701_b > 1800) * (ps_702_a > 1800) * 2 + (ps_701_a > 800) * (ps_701_b > 800) * (ps_702_a > 800)
+    state_map:
+      "0":
+        label: "OFF"
+        color: MAJOR
+      "1":
+        label: Argon
+        color: RGB(115, 147, 179)
+      "3":
+        label: Nitrogen
+        color: OK
+  XIA Filters:
+    derived:
+      pvs:
+        f250: PFIL1607-7-I21-01:control
+        f500: PFIL1607-7-I21-02:control
+        f1000: PFIL1607-7-I21-03:control
+        f10000: PFIL1607-7-I21-04:control
+      expression: f250*250 + f500*500 + f1000*1000 + f10000*10000
+    state_map:
+      "0":
+        label: OUT
+        color: OK
+      "250":
+        label: 250um
+        color: ActiveText
+      "500":
+        label: 500um
+        color: ActiveText
+      "750":
+        label: 750um
+        color: Attention
+      "1000":
+        label: 1000um
+        color: Attention
+      "1250":
+        label: 1250um
+        color: MAJOR
+      "1500":
+        label: 1500um
+        color: MAJOR
+      "1750":
+        label: 1750um
+        color: MAJOR
+
+controls:
+  Mono Energy:
+    read_pv: BL1607-I21:Mono:Energy:EV:fbk
+    write_pv: BL1607-I21:Mono:Energy:EV
+  Dwell Time:
+    read_pv: MCS1607-701:mcs:delay
+    write_pv: PV:DWELL:TIME:SP
+    units: ms
+  Stage Z:
+    read_pv: SMTR1607-7-I21-16:mm:fbk
+    write_pv: "STR1607-7-I21-16:mm"
+  M1 Pitch:
+    read_pv: BL1607-I21:M1:Pitch:deg:fbk
+    write_pv: PV:M1:PITCH:SP
+  JJ Vert Gap:
+    read_pv: PSL1607-7-I21-01:Gap:mm
+    write_pv: "PSL1607-7-I21-01:Gap:mm"
+  JJ Vert Center:
+    read_pv: PSL1607-7-I21-01:Center:mm
+    write_pv: "PSL1607-7-I21-01:Center:mm"
+  JJ Hor Gap:
+    read_pv: PSL1607-7-I21-02:Gap:mm
+    write_pv: "PSL1607-7-I21-02:Gap:mm"
+  JJ Hor Center:
+    read_pv: PSL1607-7-I21-02:Center:mm
+    write_pv: "PSL1607-7-I21-02:Center:mm"
+  Stage Y:
+    read_pv: SMTR1607-7-I21-15:mm:sp
+    write_pv: SMTR1607-7-I21-15:mm:sp
+  Sample Wheel:
+    read_pv: SMTR1607-7-I21-19:deg
+    write_pv: "SMTR1607-7-I21-19:deg"
+    units: deg
+  Det Stage Inboard:
+    read_pv: SMTR1607-7-I21-18:mm
+    write_pv: "MTR1607-7-I21-18:mm"
+    units: mm
+  Det Stage Outboard:
+    read_pv: SMTR1607-7-I21-17:mm
+    write_pv: "MTR1607-7-I21-17:mm"
+    units: mm
+  DBHR M1:
+    read_pv: SMTR1607-7-I21-08:mm:fbk
+    write_pv: "SMTR1607-7-I21-08:mm"
+    stop_pv: PV:DBHR:M1:STOP
+  DBHR M2:
+    read_pv: SMTR1607-7-I21-09:mm:fbk
+    write_pv: "SMTR1607-7-I21-09:mm"
+    stop_pv: PV:DBHR:M2:STOP
+  DBHR Pitch:
+    read_pv: SMTR1607-7-I21-07:deg:fbk
+    write_pv: "SMTR1607-7-I21-07:deg"
+    stop_pv: PV:DBHR:PITCH:stop STOP
+
+commands:
+  Open POE Shutter:
+    write_pv: SSH1607-5-I21-01:opr:open
+  Close POE Shutter:
+    write_pv: SSH1607-5-I21-01:opr:close
+  Move M2 Paddle In:
+    write_pv: "BL1607-I21:M2:Slit:mm"
+    command_value: 0.0 # <-- set to actual IN-position (mm)
+    button_label: Move In
+
+dbhr_in:
+  DBHR M1: 3.4 # <-- fill in DBHR In position values
+  DBHR M2: 2.0
+  DBHR Pitch: 0.16
+
+dbhr_out:
+  DBHR M1: 0.0 # <-- fill in DBHR Out position values
+  DBHR M2: 6.0
+  DBHR Pitch: 0.0
+
+cryostat:
+  temperature_readback:
+    read_pv: TC1607-7-01:T1:READ_TEMP_SIG_TEMP
+    units: K
+  temperature_setpoint:
+    read_pv: TC1607-7-01:C1:READ_TEMP_LOOP_TSET
+    write_pv: TC1607-7-01:C1:SET_TEMP_LOOP_TSET
+    units: K
+  auto_heat:
+    read_pv: TC1607-7-01:C1:READ_TEMP_LOOP_ENAB
+    write_pv: TC1607-7-01:C1:SET_TEMP_LOOP_ENAB
+  heater_power:
+    read_pv: TC1607-7-01:C1:READ_TEMP_LOOP_HSET
+    units: "%"
+  vacuum:
+    read_pv: FRG1607-7-I21-01:vac:p
+    units: Torr
+  ln2_weight:
+    read_pv: BL1607-7-I21:Scale:701:fbk
+    expression: value / 24.0 * 100.0
+    units: "%"
+  gas_flow:
+    read_pv: TC1607-7-01:C1:READ_TEMP_LOOP_FSET
+    write_pv: TC1607-7-01:C1:SET_TEMP_LOOP_FSET
+    setpoint_read_pv: TC1607-7-01:C1:SET_TEMP_LOOP_FSET
+    units: "%"
+
+furnace:
+  temperature_readback:
+    read_pv: PV:FURNACE:TEMP:RBV
+    units: C
+  temperature_setpoint:
+    read_pv: PV:FURNACE:SP:RBV
+    write_pv: PV:FURNACE:SP
+    units: C
+    presets: [100, 200, 400, 600, 800]
+  heat_rate:
+    read_pv: PV:FURNACE:HEATRATE:RBV
+    write_pv: PV:FURNACE:HEATRATE:SP
+    units: deg/min
+  stop_pv: PV:FURNACE:STOP
+
+# Keithley amplifier sensitivity lookup tables (index → display string)
+_k428_num_labels: &k428_num
+  0: "1"
+  1: "2"
+  2: "5"
+  3: "10"
+  4: "20"
+  5: "50"
+  6: "100"
+  7: "200"
+  8: "500"
+
+_k428_unit_labels: &k428_unit
+  0: "pA/V"
+  1: "nA/V"
+  2: "uA/V"
+  3: "mA/V"
+
+ion_chambers:
+  IC0:
+    # read_pv: MCS1607-701:mcs16:fbk
+    read_pv: TRG1607-702:FMC_IN:VAL1
+    scale_pv: TRG1607-702:FMC_IN:GAIN1
+    unit_num_pv: A1607-701:sens_num
+    unit_num_labels: *k428_num
+    unit_text_pv: A1607-701:sens_unit
+    unit_text_labels: *k428_unit
+    gain_down_pv: A1607-701:gainDecrease
+    gain_up_pv: A1607-701:gainIncrease
+    derived:
+      delay_pv: MCS1607-701:mcs:delay
+      expression: read_pv * scale_pv
+      scale: 1.0E-8
+      units: V
+    photon_conversion:
+      ic_length_cm: 11.7
+      gas: N2
+      W_eV: 35.0
+      scale: 0.287
+      units: photons/s
+  IC1:
+    # read_pv: MCS1607-701:mcs17:fbk
+    read_pv: TRG1607-702:FMC_IN:VAL2
+    scale_pv: TRG1607-702:FMC_IN:GAIN2
+    unit_num_pv: A1607-702:sens_num
+    unit_num_labels: *k428_num
+    unit_text_pv: A1607-702:sens_unit
+    unit_text_labels: *k428_unit
+    gain_down_pv: A1607-702:gainDecrease
+    gain_up_pv: A1607-702:gainIncrease
+    derived:
+      delay_pv: MCS1607-701:mcs:delay
+      expression: read_pv * scale_pv
+      scale: 1.0e-8
+      units: V
+    photon_conversion:
+      ic_length_cm: 11.7
+      gas: N2
+      W_eV: 35.0
+      scale: 0.287
+      units: photons/s
+  IC2:
+    # read_pv: MCS1607-701:mcs18:fbk
+    read_pv: TRG1607-702:FMC_IN:VAL3
+    scale_pv: TRG1607-702:FMC_IN:GAIN3
+    unit_num_pv: A1607-703:sens_num
+    unit_num_labels: *k428_num
+    unit_text_pv: A1607-703:sens_unit
+    unit_text_labels: *k428_unit
+    gain_down_pv: A1607-703:gainDecrease
+    gain_up_pv: A1607-703:gainIncrease
+    derived:
+      delay_pv: MCS1607-701:mcs:delay
+      expression: read_pv * scale_pv
+      scale: 1.0e-8
+      units: V
+    photon_conversion:
+      ic_length_cm: 11.7
+      gas: N2
+      W_eV: 35.0
+      scale: 0.287
+      units: photons/s
+  PIPS:
+    # read_pv: MCS1607-701:mcs19:fbk
+    read_pv: TRG1607-702:FMC_IN:VAL4
+    scale_pv: TRG1607-702:FMC_IN:GAIN4
+    unit_num_pv: A1607-704:sens_num
+    unit_num_labels: *k428_num
+    unit_text_pv: A1607-704:sens_unit
+    unit_text_labels: *k428_unit
+    gain_down_pv: PV:PIPS:GAIN:DOWN
+    gain_up_pv: PV:PIPS:GAIN:UP
+    derived:
+      delay_pv: MCS1607-701:mcs:delay
+      expression: read_pv * scale_pv
+      scale: 1.0e-8
+      units: V
+    photon_conversion:
+      ic_length_cm: 11.7
+      gas: N2
+      W_eV: 35.0
+      scale: 0.287
+      units: photons/s
+
+detectors:
+  - name: "Inboard "
+    prefix: "PDTR1607-701:"
+    nmca: 32
+    det_type: "ME-32"
+    ioc_type: "xspress3"
+    stage_read_pv: SMTR1607-7-I21-18:mm
+    stage_write_pv: "SMTR1607-7-I21-18:mm"
+  - name: "Outboard"
+    prefix: "PDTR1607-702:"
+    nmca: 32
+    det_type: "ME-32"
+    ioc_type: "xspress3"
+    stage_read_pv: SMTR1607-7-I21-17:mm
+    stage_write_pv: "SMTR1607-7-I21-17:mm"
