@@ -98,9 +98,10 @@ from PyQt5.QtWidgets import (                                        # noqa: E40
 )
 from beamline_control import BeamlineControlWindow, _qss             # noqa: E402
 
-# ── XRF subprocess manager ────────────────────────────────────────────────────
+# ── Subprocess script paths ───────────────────────────────────────────────────
 
-_XRF_SCRIPT = PROJECT_DIR / "xrf_launch.py"
+_XRF_SCRIPT           = PROJECT_DIR / "xrf_launch.py"
+_SAMPLE_HOLDER_SCRIPT = PROJECT_DIR / "sample_holder_ui.py"
 
 
 class XRFProcess:
@@ -208,16 +209,20 @@ class CLSMainWindow(BeamlineControlWindow):
     def __init__(self, *, use_sim: bool = False, use_dummy: bool = False):
         super().__init__()
         self._xrf = XRFProcess(use_sim=use_sim, use_dummy=use_dummy)
+        self._sh_proc: subprocess.Popen | None = None   # sample holder subprocess
         self._build_xrf_toolbar()
         self.setWindowTitle("Beamline Controls")
 
-        # Launch the XRF viewer immediately so it's ready when needed.
-        self._xrf.launch()
+        # Defer XRF launch until after the window is visible — subprocess.Popen
+        # blocks briefly for the OS fork/exec even though it is "non-blocking",
+        # which delays the beamline controls panel from painting.
+        QTimer.singleShot(200, self._xrf.launch)
 
         # Poll every 1.5 s so the toolbar status stays accurate even if the
         # user closes the XRF window directly (it will be re-launched on click).
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._refresh_xrf_ui)
+        self._poll_timer.timeout.connect(self._refresh_sh_ui)
         self._poll_timer.start(1500)
 
     # ── toolbar ───────────────────────────────────────────────────────────────
@@ -256,6 +261,18 @@ class CLSMainWindow(BeamlineControlWindow):
         )
         tb.addWidget(self._xrf_status)
 
+        tb.addSeparator()
+
+        self._sh_action = QAction("Sample Holder", self)
+        self._sh_action.triggered.connect(self._on_sh_clicked)
+        tb.addAction(self._sh_action)
+
+        self._sh_status = QLabel("  ●  Sample holder: closed", self)
+        self._sh_status.setStyleSheet(
+            "color: #666666; font-size: 12px; background: transparent; padding-left: 4px;"
+        )
+        tb.addWidget(self._sh_status)
+
     # ── XRF button handler ────────────────────────────────────────────────────
 
     def _on_xrf_clicked(self) -> None:
@@ -280,11 +297,58 @@ class CLSMainWindow(BeamlineControlWindow):
                 "color: #666666; font-size: 12px; background: transparent; padding-left: 4px;"
             )
 
+    # ── Sample Holder handlers ────────────────────────────────────────────────
+
+    def _sh_is_running(self) -> bool:
+        return self._sh_proc is not None and self._sh_proc.poll() is None
+
+    def _on_sh_clicked(self) -> None:
+        if self._sh_is_running():
+            self._xrf.raise_window()   # reuse xdotool raise logic
+            # Fallback: try to raise by PID directly
+            try:
+                pid = self._sh_proc.pid
+                wids = subprocess.run(
+                    ["xdotool", "search", "--pid", str(pid)],
+                    capture_output=True, text=True,
+                ).stdout.strip().split("\n")
+                if wids and wids[0]:
+                    subprocess.run(["xdotool", "windowactivate", "--sync", wids[0]],
+                                   capture_output=True)
+            except Exception:
+                pass
+        else:
+            env = os.environ.copy()
+            env.setdefault("DISPLAY", os.environ.get("DISPLAY", ":0"))
+            env["PYTHONPATH"] = (
+                str(PROJECT_DIR) + os.pathsep + env.get("PYTHONPATH", "")
+            )
+            self._sh_proc = subprocess.Popen(
+                [PYTHON, str(_SAMPLE_HOLDER_SCRIPT)],
+                env=env,
+                cwd=str(PROJECT_DIR),
+            )
+        self._refresh_sh_ui()
+
+    def _refresh_sh_ui(self) -> None:
+        if self._sh_is_running():
+            self._sh_status.setText("  ●  Sample holder: open")
+            self._sh_status.setStyleSheet(
+                "color: #00c800; font-size: 12px; background: transparent; padding-left: 4px;"
+            )
+        else:
+            self._sh_status.setText("  ●  Sample holder: closed")
+            self._sh_status.setStyleSheet(
+                "color: #666666; font-size: 12px; background: transparent; padding-left: 4px;"
+            )
+
     # ── cleanup ───────────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
         self._poll_timer.stop()
         self._xrf.terminate()
+        if self._sh_is_running():
+            self._sh_proc.terminate()
         super().closeEvent(event)
 
 

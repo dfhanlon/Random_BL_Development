@@ -38,6 +38,8 @@ PROJECT_DIR = Path(__file__).parent.resolve()
 
 os.environ.setdefault("LARCHDIR",     str(PROJECT_DIR / ".larch"))
 os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_DIR / ".mplconfig"))
+# Suppress GTK module warnings from broken system libraries (harmless but noisy)
+os.environ["GTK_MODULES"] = ""
 
 Path(os.environ["LARCHDIR"]).mkdir(parents=True, exist_ok=True)
 Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
@@ -182,7 +184,7 @@ _controls_cfg = _load_controls_cfg()
 # Import after EPICS patch so xraylarch picks up the patched module.
 # build_app_classes() also loads wx/larch into the process, after which we
 # can import wx and larch helpers directly.
-from app import DetectorConfig, build_app_classes  # noqa: E402
+from app_blcontrol import DetectorConfig, build_app_classes  # noqa: E402
 
 DetectorPanel, _, Xspress3ViewerApp = build_app_classes()
 
@@ -286,25 +288,31 @@ class GeOnlyFrame(wx.Frame):
             name_lbl.SetFont(_f2)
             card_sizer.Add(name_lbl, 0, wx.LEFT | wx.TOP, 8)
 
+            def _dim_label(parent, text):
+                lbl = wx.StaticText(parent, label=text)
+                lbl.SetForegroundColour(wx.Colour(130, 130, 130))
+                return lbl
+
             rbk_row = wx.BoxSizer(wx.HORIZONTAL)
-            rbk = wx.TextCtrl(card, value="--", size=(90, -1),
+            rbk_row.Add(_dim_label(card, "Rbk"), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+            rbk = wx.TextCtrl(card, value="--", size=(80, -1),
                               style=wx.TE_READONLY | wx.TE_RIGHT | wx.BORDER_SIMPLE)
             rbk.SetBackgroundColour(wx.Colour(30, 30, 30))
             rbk.SetForegroundColour(wx.Colour(255, 255, 255))
-            rbk_row.Add(rbk, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+            rbk_row.Add(rbk, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
             mm_lbl = wx.StaticText(card, label="mm")
-            mm_lbl.SetForegroundColour(wx.Colour(136, 136, 136))
-            rbk_row.Add(mm_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+            mm_lbl.SetForegroundColour(wx.Colour(100, 100, 100))
+            rbk_row.Add(mm_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 3)
             card_sizer.Add(rbk_row, 0, wx.TOP, 4)
 
             sp_row = wx.BoxSizer(wx.HORIZONTAL)
-            sp = wx.TextCtrl(card, size=(90, -1),
+            sp_row.Add(_dim_label(card, "SP "), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+            sp = wx.TextCtrl(card, size=(80, -1),
                              style=wx.TE_PROCESS_ENTER | wx.BORDER_SIMPLE)
-            sp.SetBackgroundColour(wx.Colour(64, 64, 64))
-            sp.SetForegroundColour(wx.Colour(255, 255, 255))
-            sp.SetHint("setpoint")
-            sp_row.Add(sp, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
-            set_btn = wx.Button(card, label="Set", size=(44, -1))
+            sp.SetBackgroundColour(wx.Colour(55, 65, 80))
+            sp.SetForegroundColour(wx.Colour(200, 220, 255))
+            sp_row.Add(sp, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+            set_btn = wx.Button(card, label="Set", size=(40, -1))
             sp_row.Add(set_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
             card_sizer.Add(sp_row, 0, wx.TOP | wx.BOTTOM, 4)
 
@@ -366,25 +374,31 @@ class GeOnlyFrame(wx.Frame):
         mono_title.SetFont(_fm)
         mono_sizer.Add(mono_title, 0, wx.LEFT | wx.TOP, 8)
 
+        def _mdim(text):
+            lbl = wx.StaticText(mono_card, label=text)
+            lbl.SetForegroundColour(wx.Colour(130, 130, 130))
+            return lbl
+
         mono_rbk_row = wx.BoxSizer(wx.HORIZONTAL)
-        self._mono_rbk = wx.TextCtrl(mono_card, value="--", size=(100, -1),
+        mono_rbk_row.Add(_mdim("Rbk"), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        self._mono_rbk = wx.TextCtrl(mono_card, value="--", size=(88, -1),
                                      style=wx.TE_READONLY | wx.TE_RIGHT | wx.BORDER_SIMPLE)
         self._mono_rbk.SetBackgroundColour(wx.Colour(30, 30, 30))
         self._mono_rbk.SetForegroundColour(wx.Colour(255, 255, 255))
-        mono_rbk_row.Add(self._mono_rbk, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
-        ev_lbl = wx.StaticText(mono_card, label="eV")
-        ev_lbl.SetForegroundColour(wx.Colour(136, 136, 136))
-        mono_rbk_row.Add(ev_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+        mono_rbk_row.Add(self._mono_rbk, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+        ev_rbk_lbl = wx.StaticText(mono_card, label="eV")
+        ev_rbk_lbl.SetForegroundColour(wx.Colour(100, 100, 100))
+        mono_rbk_row.Add(ev_rbk_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 3)
         mono_sizer.Add(mono_rbk_row, 0, wx.TOP, 4)
 
         mono_sp_row = wx.BoxSizer(wx.HORIZONTAL)
-        self._mono_sp = wx.TextCtrl(mono_card, size=(100, -1),
+        mono_sp_row.Add(_mdim("SP "), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        self._mono_sp = wx.TextCtrl(mono_card, size=(88, -1),
                                     style=wx.TE_PROCESS_ENTER | wx.BORDER_SIMPLE)
-        self._mono_sp.SetBackgroundColour(wx.Colour(64, 64, 64))
-        self._mono_sp.SetForegroundColour(wx.Colour(255, 255, 255))
-        self._mono_sp.SetHint("setpoint eV")
-        mono_sp_row.Add(self._mono_sp, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
-        mono_set_btn = wx.Button(mono_card, label="Set", size=(44, -1))
+        self._mono_sp.SetBackgroundColour(wx.Colour(55, 65, 80))
+        self._mono_sp.SetForegroundColour(wx.Colour(200, 220, 255))
+        mono_sp_row.Add(self._mono_sp, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+        mono_set_btn = wx.Button(mono_card, label="Set", size=(40, -1))
         mono_sp_row.Add(mono_set_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
         mono_sizer.Add(mono_sp_row, 0, wx.TOP | wx.BOTTOM, 4)
 

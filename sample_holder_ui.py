@@ -87,8 +87,8 @@ class SampleHolderPanel(wx.Panel):
         rbk_row.Add(mm_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
         outer.Add(rbk_row, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.BOTTOM, 10)
 
-        # Slot buttons — vertical column, oval-ish via fixed tall size
-        for i, pos in enumerate(self._positions):
+        # Slot buttons — vertical column, highest position at top
+        for i, pos in reversed(list(enumerate(self._positions))):
             btn = wx.Button(self, label=f"Slot {i + 1}\n{pos:.2f} mm",
                             size=(130, 52))
             btn.SetBackgroundColour(_SLOT_IDLE)
@@ -150,7 +150,7 @@ class SampleHolderPanel(wx.Panel):
         """Update readback and highlight the slot closest to pos_mm (if within tolerance)."""
         if self._rbk_label:
             self._rbk_label.SetLabel(f"{pos_mm:.3f}")
-        for btn, slot_pos in zip(self._slot_btns, self._positions):
+        for btn, slot_pos in zip(self._slot_btns, reversed(self._positions)):
             active = abs(pos_mm - slot_pos) <= self._tolerance
             btn.SetBackgroundColour(_SLOT_ACTIVE if active else _SLOT_IDLE)
             btn.Refresh()

@@ -14,7 +14,7 @@ from PyQt5.QtGui import QPainter, QColor, QWindow
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QScrollArea, QFrame, QGroupBox,
-    QSizePolicy, QProgressBar, QTabWidget,
+    QSizePolicy, QProgressBar, QTabWidget, QRadioButton, QButtonGroup,
 )
 
 
@@ -334,79 +334,50 @@ class PVBridge(QObject):
     """
     Owns all epics.PV objects and re-emits their callbacks as Qt signals.
 
-    subscribe() is safe to call at construction time.  Actual epics.PV
-    objects are created in a background thread after the first event-loop
-    tick so the main window appears immediately without waiting for CA
-    context initialisation or network searches.
+    epics.PV() is non-blocking on the main thread — pyepics returns immediately
+    and handles the CA connection asynchronously on its own internal thread.
+    All subscribe() calls therefore happen on the main thread with no startup
+    penalty.  A deferred poll after 400 ms seeds widgets that connected after
+    the initial auto-monitor callback fired.
 
-    _dispatch() may be called from the CA background thread; PyQt5
-    automatically queues cross-thread signal emissions so all connected
-    slots run in the main thread.
+    _dispatch() may arrive from the CA background thread; PyQt5 automatically
+    queues cross-thread signal emissions so all connected slots run in the
+    main thread.
     """
 
-    updated       = pyqtSignal(str, object)  # (pvname, value)
-    _poll_request = pyqtSignal(str)          # internal: schedule a seed-poll in main thread
+    updated = pyqtSignal(str, object)   # (pvname, value)
 
     def __init__(self):
         super().__init__()
         self._pvs:     dict[str, object] = {}
         self._handles: list[tuple]       = []   # (pv, cb_idx)
-        self._pending: list[str]         = []   # queued before connect thread starts
-        self._lock = threading.Lock()
-        # _poll_request is emitted from the background thread; the slot runs in
-        # the main thread (where QTimer is safe to use).
-        self._poll_request.connect(
-            lambda p: QTimer.singleShot(400, lambda: self._poll_current(p))
-        )
-        # Kick off PV connections after the event loop starts (window already visible).
-        QTimer.singleShot(0, self._start_connect_thread)
 
     # ── public API ────────────────────────────────────────────────────────────
 
     def subscribe(self, pvname: str):
         if not pvname:
             return
-        with self._lock:
-            if pvname not in self._pvs and pvname not in self._pending:
-                self._pending.append(pvname)
+        if pvname not in self._pvs:
+            pv = epics.PV(pvname, auto_monitor=True)
+            self._pvs[pvname] = pv
+            idx = pv.add_callback(self._dispatch)
+            self._handles.append((pv, idx))
+        # Re-emit the current value after a short delay so late-connecting
+        # widgets (e.g. FEShutterWidget subscribing after StatusChip already
+        # claimed this PV) receive the initial state.
+        QTimer.singleShot(400, lambda p=pvname: self._poll_current(p))
 
     def put(self, pvname: str, value):
         if not pvname:
             return
-        with self._lock:
-            pv = self._pvs.get(pvname)
-            if pv is None:
-                # Write-only or not-yet-connected PV — create on demand.
-                pv = epics.PV(pvname)
-                self._pvs[pvname] = pv
+        pv = self._pvs.get(pvname)
+        if pv is None:
+            pv = epics.PV(pvname)
+            self._pvs[pvname] = pv
         pv.put(value, wait=False)
 
-    # ── background connect thread ─────────────────────────────────────────────
-
-    def _start_connect_thread(self):
-        t = threading.Thread(target=self._connect_all, daemon=True, name="pvbridge-connect")
-        t.start()
-
-    def _connect_all(self):
-        """Create epics.PV objects for every queued name (runs off the main thread)."""
-        with self._lock:
-            names = list(self._pending)
-            self._pending.clear()
-
-        for pvname in names:
-            pv = epics.PV(pvname, auto_monitor=True)
-            with self._lock:
-                self._pvs[pvname] = pv
-            idx = pv.add_callback(self._dispatch)
-            with self._lock:
-                self._handles.append((pv, idx))
-            # Ask the main thread to schedule the seed poll (QTimer is not safe
-            # to call directly from a plain threading.Thread).
-            self._poll_request.emit(pvname)
-
     def _poll_current(self, pvname: str):
-        with self._lock:
-            pv = self._pvs.get(pvname)
+        pv = self._pvs.get(pvname)
         if pv is None:
             return
         try:
@@ -432,9 +403,7 @@ class PVBridge(QObject):
         self.updated.emit(pvname, display)
 
     def cleanup(self):
-        with self._lock:
-            handles = list(self._handles)
-        for pv, idx in handles:
+        for pv, idx in self._handles:
             try:
                 pv.remove_callback(idx)
             except Exception:
@@ -976,10 +945,17 @@ class CommandRow(QWidget):
 
 # ── Ion chamber card ──────────────────────────────────────────────────────────
 
+_E_CHARGE = 1.602e-19   # C
+_KEITHLEY_UNIT_MULT: dict[str, float] = {
+    "pA/V": 1e-12, "nA/V": 1e-9, "uA/V": 1e-6, "mA/V": 1e-3,
+}
+
+
 class IonChamberCard(QWidget):
     """Card display: IC name, counts value, derived voltage, gain ± buttons."""
 
-    def __init__(self, label: str, cfg: dict, bridge: PVBridge, parent=None):
+    def __init__(self, label: str, cfg: dict, bridge: PVBridge,
+                 mono_energy_pv: str = "", parent=None):
         super().__init__(parent)
         self.label = label
         self.cfg = cfg
@@ -989,6 +965,7 @@ class IonChamberCard(QWidget):
         self._gain_dn_pv    = cfg.get("gain_down_pv") or ""
         self._unit_num_pv   = cfg.get("unit_num_pv") or ""
         self._unit_text_pv  = cfg.get("unit_text_pv") or ""
+        self._mono_energy_pv = mono_energy_pv
         # Index→label maps for integer enum PVs (e.g. Keithley sens_num / sens_unit)
         raw_num  = cfg.get("unit_num_labels") or {}
         raw_text = cfg.get("unit_text_labels") or {}
@@ -999,14 +976,20 @@ class IonChamberCard(QWidget):
         self._scale         = derived.get("scale", 1.0)
         self._derived_units = derived.get("units", "V")
         ph_conv = cfg.get("photon_conversion", {})
-        self._ph_scale      = float(ph_conv.get("scale", 1.0))
+        self._W_eV          = float(ph_conv.get("W_eV", 35.0))
+        self._f_abs         = float(ph_conv.get("absorption", 1.0))  # IC absorption fraction
+        self._ph_scale      = float(ph_conv.get("scale", 1.0))   # fallback only
         self._ph_units      = ph_conv.get("units", "ph/s")
         self._counts        = None
         self._delay_ms      = None
-        self._gain_num      = None
-        self._gain_text     = None
-        self.history_times: deque = deque(maxlen=600)
-        self.history_values: deque = deque(maxlen=600)
+        self._mono_energy_eV = None
+        self._gain_num      = None   # display label, e.g. "100"
+        self._gain_text     = None   # display label, e.g. "nA/V"
+        self._gain_num_val  = None   # numeric value, e.g. 100.0
+        self._gain_text_label = None # unit string for lookup, e.g. "nA/V"
+        self.history_times: deque    = deque(maxlen=600)
+        self.history_values: deque   = deque(maxlen=600)   # raw counts
+        self.history_ph: deque       = deque(maxlen=600)   # ph/s (None when not computable)
 
         self.setStyleSheet(
             f"IonChamberCard {{ background: {PANEL}; border: 1px solid {BORDER}; "
@@ -1106,6 +1089,9 @@ class IonChamberCard(QWidget):
                 bridge.subscribe(self._unit_num_pv)
             if self._unit_text_pv:
                 bridge.subscribe(self._unit_text_pv)
+        if self._mono_energy_pv:
+            bridge.updated.connect(self._on_mono_energy)
+            bridge.subscribe(self._mono_energy_pv)
 
     def _on_counts(self, pvname: str, value):
         if pvname != self._read_pv:
@@ -1116,7 +1102,7 @@ class IonChamberCard(QWidget):
             self.history_values.append(self._counts)
         except (TypeError, ValueError):
             self._counts = None
-        self._refresh()
+        self._refresh(update_history=True)
 
     def _on_delay(self, pvname: str, value):
         if pvname != self._delay_pv:
@@ -1131,37 +1117,76 @@ class IonChamberCard(QWidget):
         if pvname == self._unit_num_pv:
             try:
                 idx = int(float(value))
-                self._gain_num = self._unit_num_labels.get(idx, str(idx))
+                label = self._unit_num_labels.get(idx, str(idx))
+                self._gain_num = label
+                self._gain_num_val = float(label)
             except (TypeError, ValueError):
                 self._gain_num = None
+                self._gain_num_val = None
         elif pvname == self._unit_text_pv:
             try:
                 idx = int(float(value))
-                self._gain_text = self._unit_text_labels.get(idx, str(idx))
+                label = self._unit_text_labels.get(idx, str(idx))
+                self._gain_text = label
+                self._gain_text_label = label
             except (TypeError, ValueError):
                 self._gain_text = str(value).strip() if value is not None else None
+                self._gain_text_label = self._gain_text
         else:
             return
         self._refresh_gain()
+        self._refresh()   # photon/s changes when gain changes
+
+    def _on_mono_energy(self, pvname: str, value):
+        if pvname != self._mono_energy_pv:
+            return
+        try:
+            self._mono_energy_eV = float(value)
+        except (TypeError, ValueError):
+            self._mono_energy_eV = None
+        self._refresh()
+
+    def _sensitivity_A_per_V(self):
+        """Return Keithley sensitivity in A/V, or None if not yet known."""
+        if self._gain_num_val is None or self._gain_text_label is None:
+            return None
+        mult = _KEITHLEY_UNIT_MULT.get(self._gain_text_label)
+        if mult is None:
+            return None
+        return self._gain_num_val * mult
 
     def _refresh_gain(self):
         parts = [p for p in (self._gain_num, self._gain_text) if p]
         self.gain_val.setText(" ".join(parts) if parts else "--")
 
-    def _refresh(self):
+    def _refresh(self, update_history: bool = False):
         c = self._counts
         t = self._delay_ms
         if c is None or not t or t <= 0:
             self.volt_val.setText("--")
             self.ph_val.setText("--")
+            if update_history:
+                self.history_ph.append(None)
             return
 
         t_s = t / 1000.0
         voltage = self._scale * c / t_s
         self.volt_val.setText(f"{voltage:.3e}")
 
-        ph_rate = self._ph_scale * c / t_s
+        sensitivity = self._sensitivity_A_per_V()
+        E_eV = self._mono_energy_eV
+        if sensitivity is not None and E_eV is not None and E_eV > 0 and self._f_abs > 0:
+            # I = V × sensitivity
+            # ph/s = I × W_eV / (e × E_photon × f_abs)
+            # f_abs accounts for partial absorption (IC transmits most of the beam)
+            current_A = voltage * sensitivity
+            ph_rate = current_A * self._W_eV / (_E_CHARGE * E_eV * self._f_abs)
+        else:
+            # Fallback: static scale (calibrated at fixed gain/energy)
+            ph_rate = self._ph_scale * c / t_s
         self.ph_val.setText(f"{ph_rate:.3e}")
+        if update_history:
+            self.history_ph.append(ph_rate)
 
 
 # ── Cryostat bar ──────────────────────────────────────────────────────────────
@@ -1893,11 +1918,13 @@ class BeamlineControlWindow(QMainWindow):
 
         ic_cfg = config.get("ion_chambers", {})
         if ic_cfg:
+            _mono_pv = (controls_cfg.get("Mono Energy") or {}).get("read_pv", "")
             ic_group = QGroupBox("Ion Chambers")
             ic_lay = QVBoxLayout(ic_group)
             ic_lay.setSpacing(10)
             for ic_lbl, iccfg in ic_cfg.items():
-                card = IonChamberCard(ic_lbl, iccfg, self.bridge)
+                card = IonChamberCard(ic_lbl, iccfg, self.bridge,
+                                      mono_energy_pv=_mono_pv)
                 self._ic_cards.append(card)
                 ic_lay.addWidget(card)
             trend_btn = _btn("Show Trend", 100)
@@ -1981,28 +2008,41 @@ class BeamlineControlWindow(QMainWindow):
         n = len(self._ic_cards)
         win = QWidget()
         win.setWindowTitle("Ion Chamber Trends")
-        win.resize(900, 220 * n)
+        win.resize(920, 240 * n + 50)
+        win.setStyleSheet("background: #2b2b2b; color: #e0e0e0;")
         lay = QVBoxLayout(win)
         lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(6)
+
+        # ── Mode toggle ───────────────────────────────────────────────────────
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(12)
+        _rb_ss = (
+            "QRadioButton { color: #cccccc; font-size: 14px; background: transparent; }"
+            "QRadioButton::indicator { width: 14px; height: 14px; }"
+        )
+        rb_counts = QRadioButton("Counts")
+        rb_ph = QRadioButton("Photons / s")
+        rb_counts.setStyleSheet(_rb_ss)
+        rb_ph.setStyleSheet(_rb_ss)
+        rb_counts.setChecked(True)
+        btn_grp = QButtonGroup(win)
+        btn_grp.addButton(rb_counts, 0)
+        btn_grp.addButton(rb_ph, 1)
+        mode_row.addWidget(rb_counts)
+        mode_row.addWidget(rb_ph)
+        mode_row.addStretch()
+        lay.addLayout(mode_row)
 
         figure = Figure(figsize=(8, 2.5 * n), facecolor="#2b2b2b")
-        figure.tight_layout()
         axes_list = []
         shared_ax = None
-        for i, card in enumerate(self._ic_cards):
+        for i in range(n):
             ax = figure.add_subplot(n, 1, i + 1, sharex=shared_ax, facecolor="#1e1e1e")
             if shared_ax is None:
                 shared_ax = ax
-            ax.set_title(card.label, color="#e0e0e0")
-            ax.set_ylabel("Signal", color="#888888")
-            ax.tick_params(colors="#888888")
-            ax.grid(True, alpha=0.2, color="#555555")
-            if i < n - 1:
-                ax.tick_params(labelbottom=False)
             axes_list.append(ax)
-        if axes_list:
-            axes_list[-1].set_xlabel("Time relative to latest sample (s)", color="#888888")
-        figure.subplots_adjust(hspace=0.45)
+        figure.subplots_adjust(hspace=0.55)
 
         canvas = FigureCanvas(figure)
         toolbar = NavToolbar(canvas, win)
@@ -2010,39 +2050,61 @@ class BeamlineControlWindow(QMainWindow):
         lay.addWidget(toolbar)
         lay.addWidget(canvas)
 
+        _prev_mode = [None]   # track mode across calls to detect switches
+
         def _refresh():
+            show_ph = rb_ph.isChecked()
+            mode_changed = (show_ph != _prev_mode[0])
+            _prev_mode[0] = show_ph
             last_idx = len(axes_list) - 1
             for i, (ax, card) in enumerate(zip(axes_list, self._ic_cards)):
                 had_data = ax.has_data()
                 saved_xlim = ax.get_xlim() if had_data else None
-                saved_ylim = ax.get_ylim() if had_data else None
+                saved_ylim = ax.get_ylim() if (had_data and not mode_changed) else None
 
                 ax.clear()
                 ax.set_facecolor("#1e1e1e")
                 ax.set_title(card.label, color="#e0e0e0", fontsize=10)
-                ax.set_ylabel("Counts", color="#888888", fontsize=9)
+                ylabel = "ph / s" if show_ph else "Counts"
+                ax.set_ylabel(ylabel, color="#888888", fontsize=9)
                 ax.tick_params(colors="#888888", labelsize=8)
                 ax.grid(True, alpha=0.2, color="#555555")
                 for spine in ax.spines.values():
                     spine.set_edgecolor("#555555")
                 if i < last_idx:
                     ax.tick_params(labelbottom=False)
-                if card.history_times:
-                    latest = card.history_times[-1]
-                    rel = [t - latest for t in card.history_times]
-                    vals = list(card.history_values)
-                    marker = "o" if len(vals) == 1 else ("." if len(vals) < 5 else None)
-                    ax.plot(rel, vals, color="#4488cc",
-                            linewidth=1.2, marker=marker, markersize=4)
-                    if had_data and saved_xlim is not None:
-                        ax.set_xlim(saved_xlim)
-                        ax.set_ylim(saved_ylim)
+
+                times = card.history_times
+                raw_vals = card.history_ph if show_ph else card.history_values
+                if times and raw_vals and len(times) == len(raw_vals):
+                    latest = times[-1]
+                    rel = [t - latest for t in times]
+                    # Drop None entries (ph/s not computable for some samples)
+                    pairs = [(r, v) for r, v in zip(rel, raw_vals) if v is not None]
+                    if pairs:
+                        xs, ys = zip(*pairs)
+                        marker = "o" if len(ys) == 1 else ("." if len(ys) < 5 else None)
+                        color = "#44bb88" if show_ph else "#4488cc"
+                        ax.plot(xs, ys, color=color,
+                                linewidth=1.2, marker=marker, markersize=4)
+                        if had_data and saved_xlim is not None:
+                            ax.set_xlim(saved_xlim)
+                            ax.set_ylim(saved_ylim)
+                    else:
+                        ax.text(0.5, 0.5, "ph/s not yet available\n(need gain + energy)",
+                                transform=ax.transAxes, color="#666666",
+                                ha="center", va="center", fontsize=9)
                 else:
                     ax.text(0.5, 0.5, "No data yet", transform=ax.transAxes,
                             color="#666666", ha="center", va="center", fontsize=9)
+
             if axes_list:
                 axes_list[-1].set_xlabel("Time (s, relative to latest)", color="#888888", fontsize=9)
             canvas.draw_idle()
+
+        # Redraw immediately when mode toggle changes
+        rb_counts.toggled.connect(lambda _: _refresh())
+        rb_ph.toggled.connect(lambda _: _refresh())
 
         timer = QTimer(win)
         timer.timeout.connect(_refresh)

@@ -7,3 +7,4 @@
 /.larch
 bc_launch.log
 xrf_viewer.log
+*.h5

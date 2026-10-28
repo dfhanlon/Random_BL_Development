@@ -151,11 +151,11 @@ controls:
     units: deg
   Det Stage Inboard:
     read_pv: SMTR1607-7-I21-18:mm
-    write_pv: "MTR1607-7-I21-18:mm"
+    write_pv: "SMTR1607-7-I21-18:mm"
     units: mm
   Det Stage Outboard:
     read_pv: SMTR1607-7-I21-17:mm
-    write_pv: "MTR1607-7-I21-17:mm"
+    write_pv: "SMTR1607-7-I21-17:mm"
     units: mm
   DBHR M1:
     read_pv: SMTR1607-7-I21-08:mm:fbk
@@ -252,7 +252,7 @@ _k428_unit_labels: &k428_unit
 
 ion_chambers:
   IC0:
-    # read_pv: MCS1607-701:mcs16:fbk
+    scaler_pv: MCS1607-701:mcs16:fbk
     read_pv: TRG1607-702:FMC_IN:VAL1
     scale_pv: TRG1607-702:FMC_IN:GAIN1
     unit_num_pv: A1607-701:sens_num
@@ -270,10 +270,11 @@ ion_chambers:
       ic_length_cm: 11.7
       gas: N2
       W_eV: 35.0
+      absorption: 0.145 # fraction of beam absorbed by this IC (measure IC2/IC1 to calibrate)
       scale: 0.287
       units: photons/s
   IC1:
-    # read_pv: MCS1607-701:mcs17:fbk
+    scaler_pv: MCS1607-701:mcs17:fbk
     read_pv: TRG1607-702:FMC_IN:VAL2
     scale_pv: TRG1607-702:FMC_IN:GAIN2
     unit_num_pv: A1607-702:sens_num
@@ -291,10 +292,11 @@ ion_chambers:
       ic_length_cm: 11.7
       gas: N2
       W_eV: 35.0
+      absorption: 0.145 # fraction of beam absorbed by this IC (measure IC2/IC1 to calibrate)
       scale: 0.287
       units: photons/s
   IC2:
-    # read_pv: MCS1607-701:mcs18:fbk
+    scaler_pv: MCS1607-701:mcs18:fbk
     read_pv: TRG1607-702:FMC_IN:VAL3
     scale_pv: TRG1607-702:FMC_IN:GAIN3
     unit_num_pv: A1607-703:sens_num
@@ -312,10 +314,11 @@ ion_chambers:
       ic_length_cm: 11.7
       gas: N2
       W_eV: 35.0
+      absorption: 0.145 # fraction of beam absorbed by this IC (measure IC2/IC1 to calibrate)
       scale: 0.287
       units: photons/s
   PIPS:
-    # read_pv: MCS1607-701:mcs19:fbk
+    scaler_pv: MCS1607-701:mcs19:fbk
     read_pv: TRG1607-702:FMC_IN:VAL4
     scale_pv: TRG1607-702:FMC_IN:GAIN4
     unit_num_pv: A1607-704:sens_num
@@ -333,6 +336,7 @@ ion_chambers:
       ic_length_cm: 11.7
       gas: N2
       W_eV: 35.0
+      absorption: 0.145 # fraction of beam absorbed by this IC (measure IC2/IC1 to calibrate)
       scale: 0.287
       units: photons/s
 
